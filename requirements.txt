@@ -1,0 +1,21 @@
+# A1(a) Baseline – Dependencies
+# Install all with: pip install -r requirements.txt
+
+# Core deep learning
+torch>=2.1.0
+torchvision>=0.16.0
+
+# CLIP (OpenAI)
+# pip install git+https://github.com/openai/CLIP.git
+clip @ git+https://github.com/openai/CLIP.git
+
+# YOLO (Ultralytics - YOLOv8)
+ultralytics>=8.0.0
+
+# Transformers (TinyLlama)
+transformers>=4.38.0
+accelerate>=0.27.0
+
+# Tokenizer support
+sentencepiece
+protobuf

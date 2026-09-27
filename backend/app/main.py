@@ -1,0 +1,34 @@
+from fastapi import FastAPI
+from app.api import projects, media, search, chat, change, reports
+from app.database import engine, Base
+
+# Create the SQLite tables immediately
+Base.metadata.create_all(bind=engine)
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(
+    title="Code Cubicle 6.0 - PS02",
+    description="AI-Powered Impact & Sustainability Media Platform Backend",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register routers
+app.include_router(projects.router)
+app.include_router(media.router)
+app.include_router(search.router)
+app.include_router(chat.router)
+app.include_router(change.router)
+app.include_router(reports.router)
+
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Impact & Sustainability Media Platform API"}
