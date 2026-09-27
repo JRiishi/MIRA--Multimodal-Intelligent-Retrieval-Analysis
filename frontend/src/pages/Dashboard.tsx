@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Images, FolderKanban, CheckCircle2, ArrowUpRight, ScanLine } from 'lucide-react';
 import { useProjects } from '../hooks/projects';
 import { useMediaLibrary } from '../hooks/media';
@@ -10,12 +10,10 @@ import {
   ErrorState,
   SkeletonMetrics,
   SkeletonRows,
-  SkeletonPlot,
   Chip,
   Coordinate,
   Meter,
 } from '../components/ui';
-import GeoPlot from '../components/GeoPlot';
 import ConfidenceHistogram from '../components/ConfidenceHistogram';
 import ActivityDensity from '../components/ActivityDensity';
 import {
@@ -31,15 +29,17 @@ function DashboardSkeleton() {
   return (
     <div className="p-4 lg:p-6 space-y-4" aria-busy="true" aria-label="Loading overview">
       <SkeletonMetrics />
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <SkeletonPlot className="xl:col-span-2" />
-        <div className="panel h-[300px]" />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="panel h-[280px]" />
+        <div className="panel h-[280px]" />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="panel">
           <SkeletonRows rows={4} />
         </div>
-        <div className="panel h-[240px]" />
+        <div className="panel">
+          <SkeletonRows rows={4} />
+        </div>
       </div>
     </div>
   );
@@ -65,7 +65,6 @@ function Thumb({ asset, className }: { asset: MediaAsset; className?: string }) 
 }
 
 export default function Dashboard() {
-  const navigate = useNavigate();
   const { data: projects, isLoading: pLoading, error: pError } = useProjects();
   const { data: media, isLoading: mLoading, error: mError } = useMediaLibrary();
 
@@ -177,7 +176,7 @@ export default function Dashboard() {
         <div className="panel px-4 py-3">
           <div className="flex flex-wrap items-baseline gap-x-5 gap-y-2 mb-2.5">
             <span className="label-strong">Pipeline</span>
-            {STATUS_ORDER.filter((s) => (stats.counts.get(s) ?? 0) > 0).map((status) => (
+            {STATUS_ORDER.filter((s: string) => (stats.counts.get(s) ?? 0) > 0).map((status: string) => (
               <span key={status} className="flex items-baseline gap-1.5">
                 <span className="label">
                   {statusOf({ processing_status: status, project_id: 'p' }).label}
@@ -190,16 +189,16 @@ export default function Dashboard() {
           <div
             className="flex h-2 gap-px"
             role="img"
-            aria-label={STATUS_ORDER.filter((s) => (stats.counts.get(s) ?? 0) > 0)
+            aria-label={STATUS_ORDER.filter((s: string) => (stats.counts.get(s) ?? 0) > 0)
               .map(
-                (s) =>
+                (s: string) =>
                   `${statusOf({ processing_status: s, project_id: 'p' }).label} ${
                     stats.counts.get(s)
                   }`,
               )
               .join(', ')}
           >
-            {STATUS_ORDER.map((status) => {
+            {STATUS_ORDER.map((status: string) => {
               const n = stats.counts.get(status) ?? 0;
               if (n === 0) return null;
               return (
@@ -222,20 +221,13 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        {/* Geography. This is the product's actual subject, so it leads. */}
-        <div className="xl:col-span-2">
-          <GeoPlot
-            projects={projects ?? []}
-            assets={stats.assets}
-            onSelectProject={(id) => navigate(`/projects/${id}`)}
-            onSelectAsset={(id) => {
-              const asset = stats.assets.find((a) => a.id === id);
-              if (asset?.project_id) navigate(`/projects/${asset.project_id}`);
-            }}
-          />
-        </div>
+      {/* Analytics Distributions */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ConfidenceHistogram assets={stats.assets} />
+        <ActivityDensity assets={stats.assets} />
+      </div>
 
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {/* Exception queue: the primary action surface. */}
         <section className="panel flex flex-col max-h-[420px]" aria-labelledby="queue-h">
           <PanelHeader
@@ -286,17 +278,9 @@ export default function Dashboard() {
             </ul>
           )}
         </section>
-      </div>
 
-      {/* Distributions: how the corpus is actually behaving. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ConfidenceHistogram assets={stats.assets} />
-        <ActivityDensity assets={stats.assets} />
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {/* Recent captures */}
-        <section className="panel" aria-labelledby="recent-h">
+        <section className="panel flex flex-col max-h-[420px]" aria-labelledby="recent-h">
           <PanelHeader
             title={<span id="recent-h">Latest captures</span>}
             actions={
@@ -309,7 +293,7 @@ export default function Dashboard() {
           {recent.length === 0 ? (
             <EmptyState icon={Images} title="Nothing ingested yet" />
           ) : (
-            <ul>
+            <ul className="overflow-y-auto flex-1">
               {recent.map((asset) => {
                 const s = statusOf(asset);
                 return (
@@ -339,72 +323,72 @@ export default function Dashboard() {
             </ul>
           )}
         </section>
+      </div>
 
-        {/* Target coverage */}
-        <section className="panel" aria-labelledby="targets-h">
-          <PanelHeader
-            title={<span id="targets-h">Target coverage</span>}
-            meta="verified share of each project"
-            actions={
-              <Link to="/projects" className="btn btn-sm btn-ghost">
-                Manage
-                <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
+      {/* Target coverage */}
+      <section className="panel" aria-labelledby="targets-h">
+        <PanelHeader
+          title={<span id="targets-h">Target coverage</span>}
+          meta="verified share of each project"
+          actions={
+            <Link to="/projects" className="btn btn-sm btn-ghost">
+              Manage
+              <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
+            </Link>
+          }
+        />
+        {(projects?.length ?? 0) === 0 ? (
+          <EmptyState
+            icon={FolderKanban}
+            title="No routing targets"
+            description="Define a project with a coordinate so the router has somewhere to send captures."
+            action={
+              <Link to="/projects" className="btn btn-primary">
+                Create project
               </Link>
             }
           />
-          {(projects?.length ?? 0) === 0 ? (
-            <EmptyState
-              icon={FolderKanban}
-              title="No routing targets"
-              description="Define a project with a coordinate so the router has somewhere to send captures."
-              action={
-                <Link to="/projects" className="btn btn-primary">
-                  Create project
-                </Link>
-              }
-            />
-          ) : (
-            <ul>
-              {projects?.map((project) => {
-                const owned = stats.assets.filter((a) => a.project_id === project.id);
-                const verified = owned.filter((a) => a.processing_status === 'READY').length;
-                const share = owned.length ? verified / owned.length : 0;
-                return (
-                  <li key={project.id}>
-                    <Link
-                      to={`/projects/${project.id}`}
-                      className="block px-4 py-3 rule-b last:border-b-0 row-hover"
-                    >
-                      <div className="flex items-baseline justify-between gap-3">
-                        <span className="text-[13px] font-medium text-ink truncate group-hover:text-brand-700">
-                          {project.name}
-                        </span>
-                        <span className="value text-[12px] text-ink-2 flex-shrink-0">
-                          {verified}
-                          <span className="text-ink-3">/{owned.length}</span>
-                        </span>
-                      </div>
-                      <div className="mt-2">
-                        <Meter
-                          value={share}
-                          tone={share >= 0.6 ? 'ok' : share > 0 ? 'brand' : 'signal'}
-                          label={`${project.name}: ${Math.round(share * 100)} percent verified`}
-                        />
-                      </div>
-                      <p className="meta mt-1.5 truncate">
-                        {project.location_name ?? 'no location'}
-                        {project.latitude != null && (
-                          <Coordinate lat={project.latitude} lng={project.longitude} className="ml-2" />
-                        )}
-                      </p>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-      </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 p-3">
+            {projects?.map((project) => {
+              const owned = stats.assets.filter((a) => a.project_id === project.id);
+              const verified = owned.filter((a) => a.processing_status === 'READY').length;
+              const share = owned.length ? verified / owned.length : 0;
+              return (
+                <div key={project.id} className="p-3 border border-line rounded-[var(--radius-control)] bg-surface hover:border-line-strong transition-colors">
+                  <Link
+                    to={`/projects/${project.id}`}
+                    className="block group"
+                  >
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-[13px] font-medium text-ink truncate group-hover:text-brand-700">
+                        {project.name}
+                      </span>
+                      <span className="value text-[12px] text-ink-2 flex-shrink-0">
+                        {verified}
+                        <span className="text-ink-3">/{owned.length}</span>
+                      </span>
+                    </div>
+                    <div className="mt-2">
+                      <Meter
+                        value={share}
+                        tone={share >= 0.6 ? 'ok' : share > 0 ? 'brand' : 'signal'}
+                        label={`${project.name}: ${Math.round(share * 100)} percent verified`}
+                      />
+                    </div>
+                    <p className="meta mt-1.5 truncate">
+                      {project.location_name ?? 'no location'}
+                      {project.latitude != null && (
+                        <Coordinate lat={project.latitude} lng={project.longitude} className="ml-2" />
+                      )}
+                    </p>
+                  </Link>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <p className="label flex items-center gap-1.5 pt-1">
         <ScanLine className="w-3 h-3" aria-hidden="true" />

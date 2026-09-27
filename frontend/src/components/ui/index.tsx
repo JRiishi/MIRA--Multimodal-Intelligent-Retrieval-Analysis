@@ -95,17 +95,6 @@ export function SkeletonMetrics({ count = 5 }: { count?: number }) {
   );
 }
 
-/** Placeholder matching the GeoPlot frame, so the panel does not resize. */
-export function SkeletonPlot({ className }: { className?: string }) {
-  return (
-    <div className={clsx('panel overflow-hidden', className)} aria-hidden="true">
-      <div className="px-3.5 py-2.5 rule-b">
-        <Skeleton className="h-2.5 w-32" />
-      </div>
-      <Skeleton className="aspect-[100/62] rounded-none" />
-    </div>
-  );
-}
 
 export function LoadingState({ label = 'Loading' }: { label?: string }) {
   return (

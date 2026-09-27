@@ -8,7 +8,6 @@ import {
   Image as ImageIcon,
   UserCheck,
   ScanSearch,
-  MapPin,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { navigation } from './layout/navigation';
@@ -209,18 +208,6 @@ export default function CommandPalette({
           setOpen(false);
         },
         keywords: 'review queue unassigned assign decision',
-      },
-      {
-        id: 'action-geo',
-        label: 'Show geographic plot',
-        hint: 'overview',
-        group: 'Action',
-        icon: MapPin,
-        run: () => {
-          navigate('/dashboard');
-          setOpen(false);
-        },
-        keywords: 'map geo gps plot coordinates radius',
       },
     );
 

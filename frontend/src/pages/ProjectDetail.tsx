@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { clsx } from 'clsx';
 import {
   ArrowLeft,
   Trash2,
@@ -15,6 +16,7 @@ import {
   MapPin,
   Sparkles,
   AlertTriangle,
+  ChevronsLeftRight,
 } from 'lucide-react';
 import { useProject, useDeleteProject } from '../hooks/projects';
 import { useMediaLibrary, useAssetTransformations } from '../hooks/media';
@@ -39,11 +41,10 @@ import {
   AssetId,
   SegmentedControl,
 } from '../components/ui';
-import GeoPlot from '../components/GeoPlot';
 import ActivityDensity from '../components/ActivityDensity';
 import { ChatMessageRenderer } from '../components/ChatMessageRenderer';
 import { humanizeToken, relativeTime, shortDate, stamp, statusOf } from '../lib/presentation';
-import type { ChatEvidenceItem, MediaAsset, Project } from '../types';
+import type { ChatEvidenceItem, MediaAsset } from '../types';
 
 type TabId = 'overview' | 'media' | 'timeline' | 'change' | 'ask' | 'report';
 
@@ -182,12 +183,10 @@ type CompareMode = 'slider' | 'split' | 'composite';
 
 function ProgressionPanel({
   projectId,
-  project,
   assets,
   assetCount,
 }: {
   projectId: string;
-  project: Project;
   assets: MediaAsset[];
   assetCount: number;
 }) {
@@ -221,7 +220,6 @@ function ProgressionPanel({
             description="Visual progression needs at least two captures from this target. Ingest more field media to unlock the comparison."
           />
         </div>
-        <GeoPlot projects={[project]} assets={assets} radiusKm={15} />
       </div>
     );
   }
@@ -292,116 +290,227 @@ function ProgressionPanel({
         </div>
       )}
 
-      {result && (
-        <>
-          <div className="panel p-3 flex flex-wrap items-center gap-x-6 gap-y-2">
-            <div>
-              <span className="label">Change score</span>
-              <span className="value text-[18px] font-semibold ml-2">
-                {result.change_score.toFixed(3)}
-              </span>
-            </div>
-            <Chip className={result.change_detected ? 'chip-caution' : 'chip-neutral'}>
-              {result.change_detected ? 'change detected' : 'no material change'}
-            </Chip>
-            <p className="text-[12.5px] text-ink-2 flex-1 min-w-[220px] leading-relaxed">
-              {result.summary}
-            </p>
-          </div>
+      {result && (() => {
+        const beforeAsset = comparable.find((a) => a.id === result.before_asset_id);
+        const afterAsset = comparable.find((a) => a.id === result.after_asset_id);
 
-          <div className="panel p-3">
-            {mode === 'slider' && (
-              <div className="relative aspect-[16/9] bg-sunken overflow-hidden select-none">
-                <img
-                  src={result.after_url}
-                  alt="Most recent capture"
-                  className="absolute inset-0 w-full h-full object-cover"
-                />
-                <div
-                  className="absolute inset-0 overflow-hidden"
-                  style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}
-                >
-                  <img
-                    src={result.before_url}
-                    alt="Baseline capture"
-                    className="absolute inset-0 w-full h-full object-cover"
-                  />
+        return (
+          <>
+            {/* Summary Metrics & AI Insight */}
+            <div className="panel p-3.5 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div>
+                  <span className="label block">Visual Change</span>
+                  <div className="flex items-baseline gap-2 mt-0.5">
+                    <span className="value text-[20px] font-semibold text-ink">
+                      {(result.change_score * 100).toFixed(1)}%
+                    </span>
+                    <span className="meta">delta</span>
+                  </div>
                 </div>
-                <span
-                  className="absolute top-0 bottom-0 w-px bg-white/90 pointer-events-none"
-                  style={{ left: `${position}%` }}
-                  aria-hidden="true"
-                />
-                <span
-                  className="absolute top-2 left-2 px-1.5 py-0.5 bg-ink/75 text-white label"
-                  aria-hidden="true"
-                >
-                  Before
-                </span>
-                <span
-                  className="absolute top-2 right-2 px-1.5 py-0.5 bg-ink/75 text-white label"
-                  aria-hidden="true"
-                >
-                  After
-                </span>
-                <label htmlFor="progression-slider" className="sr-only">
-                  Reveal baseline capture
-                </label>
-                <input
-                  id="progression-slider"
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={position}
-                  onChange={(e) => setPosition(Number(e.target.value))}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize"
-                />
+                <div className="h-7 w-px bg-line" aria-hidden="true" />
+                <div>
+                  <span className="label block">Status</span>
+                  <div className="mt-0.5">
+                    <Chip className={result.change_detected ? 'chip-caution' : 'chip-ok'}>
+                      {result.change_detected ? 'Material change detected' : 'No material change'}
+                    </Chip>
+                  </div>
+                </div>
               </div>
-            )}
 
-            {mode === 'split' && (
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { label: 'Before', url: result.before_url, id: result.before_asset_id },
-                  { label: 'After', url: result.after_url, id: result.after_asset_id },
-                ].map((side) => (
-                  <figure key={side.label}>
-                    <div className="aspect-[16/9] bg-sunken border border-line overflow-hidden">
+              {result.summary && (
+                <div className="flex-1 min-w-[260px] max-w-xl bg-sunken/60 border border-line/70 rounded-[var(--radius-control)] p-2.5 text-[12px] text-ink-2 leading-relaxed">
+                  <div className="flex items-center gap-1.5 text-ink font-medium mb-0.5">
+                    <Sparkles className="w-3.5 h-3.5 text-signal-500 flex-shrink-0" />
+                    <span>Progression Analysis</span>
+                  </div>
+                  <p>{result.summary}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Visual Viewport */}
+            <div className="panel p-4">
+              {mode === 'slider' && (
+                <div className="max-w-3xl mx-auto space-y-3">
+                  {/* Slider Canvas */}
+                  <div className="relative aspect-[16/10] max-h-[440px] bg-rail rounded-[var(--radius-panel)] border border-line-strong overflow-hidden select-none shadow-sm group">
+                    {/* Background: After Image */}
+                    <img
+                      src={result.after_url}
+                      alt="Most recent capture"
+                      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                    />
+
+                    {/* Foreground: Before Image (Clipped) */}
+                    <div
+                      className="absolute inset-0 overflow-hidden pointer-events-none"
+                      style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}
+                    >
                       <img
-                        src={side.url}
-                        alt={`${side.label} capture`}
-                        className="w-full h-full object-cover"
+                        src={result.before_url}
+                        alt="Baseline capture"
+                        className="absolute inset-0 w-full h-full object-cover"
                       />
                     </div>
-                    <figcaption className="flex items-baseline gap-2 mt-1.5">
-                      <span className="label">{side.label}</span>
-                      <AssetId id={side.id} />
-                    </figcaption>
-                  </figure>
-                ))}
-              </div>
-            )}
 
-            {mode === 'composite' && (
-              <div className="aspect-[2/1] bg-sunken border border-line overflow-hidden flex items-center justify-center">
-                {result.composite_url ? (
-                  <img
-                    src={result.composite_url}
-                    alt="Cloudinary composite of baseline and current capture"
-                    className="w-full h-full object-contain"
-                  />
-                ) : (
-                  <span className="meta">composite not available for this pair</span>
-                )}
-              </div>
-            )}
-          </div>
+                    {/* Divider Line & Circular Grab Handle */}
+                    <div
+                      className="absolute top-0 bottom-0 w-[2px] bg-white shadow-[0_0_10px_rgba(0,0,0,0.7)] pointer-events-none"
+                      style={{ left: `${position}%` }}
+                      aria-hidden="true"
+                    >
+                      <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-8 h-8 rounded-full bg-surface border border-line-strong shadow-lg flex items-center justify-center text-ink pointer-events-none group-hover:scale-110 transition-transform">
+                        <ChevronsLeftRight className="w-4 h-4 text-ink-2" />
+                      </div>
+                    </div>
 
-          <p className="label">
-            composite built with <span className="value normal-case">Cloudinary layer transforms</span>
-          </p>
-        </>
-      )}
+                    {/* Top Badges */}
+                    <div className="absolute top-3 left-3 pointer-events-none z-10">
+                      <span className="px-2.5 py-1 bg-rail/85 text-rail-ink border border-white/10 rounded text-[11px] font-mono shadow-md flex items-center gap-1.5 backdrop-blur-sm">
+                        <span className="w-1.5 h-1.5 rounded-full bg-ok-500" />
+                        <span>Baseline</span>
+                        {beforeAsset?.uploaded_at && (
+                          <span className="text-rail-ink-2 opacity-80">
+                            · {shortDate(beforeAsset.uploaded_at).replace(/,.*/, '')}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="absolute top-3 right-3 pointer-events-none z-10">
+                      <span className="px-2.5 py-1 bg-brand-900/85 text-brand-100 border border-brand-500/30 rounded text-[11px] font-mono shadow-md flex items-center gap-1.5 backdrop-blur-sm">
+                        <span className="w-1.5 h-1.5 rounded-full bg-signal-400" />
+                        <span>Latest</span>
+                        {afterAsset?.uploaded_at && (
+                          <span className="text-brand-200 opacity-80">
+                            · {shortDate(afterAsset.uploaded_at).replace(/,.*/, '')}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+
+                    {/* Transparent Full-Canvas Drag Input */}
+                    <label htmlFor="progression-slider" className="sr-only">
+                      Reveal baseline capture
+                    </label>
+                    <input
+                      id="progression-slider"
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={position}
+                      onChange={(e) => setPosition(Number(e.target.value))}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20"
+                    />
+                  </div>
+
+                  {/* Interactive Control Rail & Presets */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1 px-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="label text-ink-3 mr-1">Presets:</span>
+                      <button
+                        type="button"
+                        onClick={() => setPosition(0)}
+                        className={clsx('btn btn-xs', position === 0 ? 'btn-primary' : 'btn-secondary')}
+                      >
+                        Baseline (0%)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPosition(50)}
+                        className={clsx('btn btn-xs', position === 50 ? 'btn-primary' : 'btn-secondary')}
+                      >
+                        Split (50%)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPosition(100)}
+                        className={clsx('btn btn-xs', position === 100 ? 'btn-primary' : 'btn-secondary')}
+                      >
+                        Latest (100%)
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 flex-1 max-w-xs ml-auto">
+                      <span className="label text-ink-3 text-[10px]">0%</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={position}
+                        onChange={(e) => setPosition(Number(e.target.value))}
+                        className="flex-1 h-1.5 bg-sunken rounded appearance-none cursor-pointer accent-brand-600 focus:outline-none"
+                      />
+                      <span className="label text-ink-3 text-[10px]">100%</span>
+                      <span className="value text-[11px] text-ink font-semibold w-8 text-right font-mono">
+                        {position}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {mode === 'split' && (
+                <div className="max-w-4xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {[
+                    { label: 'Baseline', url: result.before_url, id: result.before_asset_id, asset: beforeAsset },
+                    { label: 'Latest Capture', url: result.after_url, id: result.after_asset_id, asset: afterAsset },
+                  ].map((side) => (
+                    <figure key={side.label} className="panel overflow-hidden border border-line bg-surface flex flex-col">
+                      <div className="px-3.5 py-2 rule-b flex items-center justify-between gap-2">
+                        <span className="label-strong text-[12px]">{side.label}</span>
+                        {side.asset?.uploaded_at && (
+                          <span className="meta">{shortDate(side.asset.uploaded_at)}</span>
+                        )}
+                      </div>
+                      <div className="aspect-[16/10] max-h-[300px] bg-sunken overflow-hidden">
+                        <img
+                          src={side.url}
+                          alt={`${side.label} capture`}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <figcaption className="p-2.5 rule-t flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          {side.asset?.activity && (
+                            <Chip className="chip-neutral">{humanizeToken(side.asset.activity)}</Chip>
+                          )}
+                        </div>
+                        <AssetId id={side.id} />
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+              )}
+
+              {mode === 'composite' && (
+                <div className="max-w-3xl mx-auto space-y-2">
+                  <div className="aspect-[16/10] max-h-[440px] bg-sunken border border-line rounded-[var(--radius-panel)] overflow-hidden flex items-center justify-center">
+                    {result.composite_url ? (
+                      <img
+                        src={result.composite_url}
+                        alt="Cloudinary composite of baseline and current capture"
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <span className="meta">composite not available for this pair</span>
+                    )}
+                  </div>
+                  <p className="meta text-center">
+                    Layer transform dynamically rendered via Cloudinary multi-image overlay
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <p className="label">
+              composite built with <span className="value normal-case">Cloudinary layer transforms</span>
+            </p>
+          </>
+        );
+      })()}
 
       <Modal
         open={picking}
@@ -658,15 +767,6 @@ export default function ProjectDetail() {
       {/* OVERVIEW */}
       {tab === 'overview' && (
         <div className="space-y-4">
-          {/* Geography first. The offset between each capture and this
-              project's anchor is the fastest way to spot a bad route. */}
-          <GeoPlot
-            projects={[project]}
-            assets={assets}
-            radiusKm={15}
-            focusProjectId={project.id}
-          />
-
           <ActivityDensity assets={assets} />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -909,7 +1009,6 @@ export default function ProjectDetail() {
       {tab === 'change' && (
         <ProgressionPanel
           projectId={projectId!}
-          project={project}
           assets={assets}
           assetCount={assets.length}
         />
