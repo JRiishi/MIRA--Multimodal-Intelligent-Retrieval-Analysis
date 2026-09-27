@@ -23,21 +23,22 @@ This platform automates the entire lifecycle:
 
 ```mermaid
 graph TD
-    A[Field Media Upload] -->|POST /media/process| B(FastAPI Server)
-    B -->|Async Task| C[Cloudinary CDN]
-    B -->|Extract EXIF GPS| D[Location Service]
-    D -->|Haversine Filter (<= 15km)| E[Geo-Filtered Project Candidates]
-    B -->|Visual Analysis| F[Moondream2 VLM]
-    F -->|Extracted Visual Signals| G[Laya Decision Engine]
-    E -->|Filtered Project Criteria| G
-    G -->|Route & Score| H{Confidence Check}
-    H -->|>= 40%| I[ASSIGNED to Project]
-    H -->|28% - 40%| J[NEEDS_REVIEW]
-    H -->|< 28%| K[UNASSIGNED]
-    I & J -->|Generate Vector| L[all-MiniLM-L6-v2]
-    L -->|Upsert Point with GPS| M[(Qdrant Vector DB)]
-    B -->|Persist Metadata & Location| N[(SQLite DB)]
-    N -->|Live Polling & UI| O[React + Vite Frontend]
+    A["Field Media Upload"] -->|"POST /media/process"| B["FastAPI Server"]
+    B -->|"Async Task"| C["Cloudinary CDN"]
+    B -->|"Extract EXIF GPS"| D["Location Service"]
+    D -->|"Radius Filter (<= 15km)"| E["Geo-Filtered Project Candidates"]
+    B -->|"Visual Analysis"| F["Moondream2 VLM"]
+    F -->|"Extracted Visual Signals"| G["Laya Decision Engine"]
+    E -->|"Filtered Project Criteria"| G
+    G -->|"Route & Score"| H{"Confidence Check"}
+    H -->|"Confidence >= 35%"| I["ASSIGNED to Project"]
+    H -->|"Confidence 20% - 35%"| J["NEEDS_REVIEW"]
+    H -->|"Confidence < 20%"| K["UNASSIGNED"]
+    I -->|"Generate Vector"| L["Sentence Transformers"]
+    J -->|"Generate Vector"| L
+    L -->|"Upsert Point with GPS"| M[("Qdrant Vector DB")]
+    B -->|"Persist Metadata & Location"| N[("SQLite DB")]
+    N -->|"Live Polling & UI"| O["React + Vite Frontend"]
 ```
 
 ### 🧠 AI / ML Stack (100% Local Inference)
