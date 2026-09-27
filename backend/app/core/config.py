@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 class Settings:
-    PROJECT_NAME: str = "Code Cubicle 6.0 - PS02"
+    PROJECT_NAME: str = "MIRA — Multimodal Intelligent Retrieval & Analysis"
     
     CLOUDINARY_CLOUD_NAME: str = os.getenv("CLOUDINARY_CLOUD_NAME", "")
     CLOUDINARY_API_KEY: str = os.getenv("CLOUDINARY_API_KEY", "")

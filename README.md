@@ -1,7 +1,7 @@
-# 🌍 AI-Powered Impact & Sustainability Media Platform
+# 🪐 MIRA — Multimodal Intelligent Retrieval & Analysis
 
-> **Code Cubicle 6.0 — PS02**  
-> An intelligent, real-time media ingestion, visual analysis, automated project routing, and semantic search platform for field operations, environmental remediation, and infrastructure projects.
+> **AI-Powered Field Media Intelligence, Semantic Routing & Retrieval Platform**  
+> *Built for Code Cubicle 6.0 — PS02*
 
 ---
 

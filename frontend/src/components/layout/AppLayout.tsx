@@ -19,8 +19,8 @@ export default function AppLayout() {
       <aside className="w-64 bg-white border-r border-gray-200 flex flex-col hidden md:flex">
         <div className="h-16 flex items-center px-6 border-b border-gray-100">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-primary-600 rounded-sm"></div>
-            <span className="font-semibold text-gray-900 tracking-tight">Code Cubicle</span>
+            <div className="w-6 h-6 bg-primary-600 rounded-sm flex items-center justify-center text-white font-bold text-xs">M</div>
+            <span className="font-semibold text-gray-900 tracking-tight">MIRA</span>
           </div>
         </div>
         

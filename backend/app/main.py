@@ -8,8 +8,8 @@ Base.metadata.create_all(bind=engine)
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
-    title="Code Cubicle 6.0 - PS02",
-    description="AI-Powered Impact & Sustainability Media Platform Backend",
+    title="MIRA — Multimodal Intelligent Retrieval & Analysis",
+    description="AI-Powered Field Media Intelligence, Semantic Routing & Retrieval Platform Backend",
     version="1.0.0"
 )
 

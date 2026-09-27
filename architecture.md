@@ -1,4 +1,5 @@
-# Code Cubicle 6.0 — PS02: AI-Powered Media Platform Architecture
+# MIRA — Multimodal Intelligent Retrieval & Analysis Architecture
+*Code Cubicle 6.0 — PS02: AI-Powered Field Media Intelligence Platform*
 
 This document provides a comprehensive, deep-dive architectural overview of the entire system, detailing the end-to-end media pipeline, backend services, frontend application structure, and data flows.
 
