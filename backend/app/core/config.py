@@ -1,6 +1,10 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
+env_file = Path(__file__).resolve().parent.parent.parent / ".env"
+if env_file.exists():
+    load_dotenv(dotenv_path=env_file, override=True)
 load_dotenv(override=True)
 
 class Settings:

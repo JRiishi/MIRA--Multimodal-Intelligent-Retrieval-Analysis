@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Text, Float
+from sqlalchemy import Column, String, DateTime, Text, Float, Boolean
 from datetime import datetime
 import uuid
 from app.database import Base
@@ -8,7 +8,9 @@ class MediaAssetDB(Base):
 
     id = Column(String, primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     cloudinary_public_id = Column(String, index=True, nullable=True)
+    original_public_id = Column(String, nullable=True)
     cloudinary_url = Column(String, nullable=True)
+    cloudinary_metadata_synced = Column(Boolean, default=False)
     project_id = Column(String, index=True, nullable=True)
     processing_status = Column(String, default="UPLOADED")
     uploaded_at = Column(DateTime, default=datetime.utcnow)

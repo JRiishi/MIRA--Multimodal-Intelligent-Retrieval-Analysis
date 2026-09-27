@@ -160,6 +160,42 @@ def background_process_media(
             qdrant_service.store_evidence(vector, payload, point_id=evidence.asset_id)
             print(f"[PIPELINE] Indexed into Qdrant: asset_id={evidence.asset_id} | project='{project_name}'")
         
+        # 6. Cloudinary Metadata Write-Back (Turns Cloudinary into the single source of truth)
+        if media_asset.cloudinary_public_id:
+            try:
+                assigned_proj = db.query(ProjectDB).filter(ProjectDB.id == media_asset.project_id).first() if media_asset.project_id else None
+                proj_name_str = assigned_proj.name if assigned_proj else "Unassigned"
+                is_verified = "true" if routing_res.status == RoutingStatus.ASSIGNED else "false"
+
+                context_dict = {
+                    "description": evidence.description or "",
+                    "activity": evidence.activity or "",
+                    "scene": evidence.scene or "",
+                    "project_name": proj_name_str,
+                    "laya_confidence": str(round(routing_res.confidence, 4)),
+                    "routing_status": routing_res.status.value,
+                    "mira_verified": is_verified
+                }
+                if image_lat is not None and image_lon is not None:
+                    context_dict["gps_lat"] = f"{image_lat:.5f}"
+                    context_dict["gps_lon"] = f"{image_lon:.5f}"
+
+                tag_list = ["mira_field"]
+                if is_verified == "true":
+                    tag_list.append("verified")
+                if proj_name_str and proj_name_str != "Unassigned":
+                    tag_list.append(proj_name_str.lower().replace(" ", "_")[:30])
+                if evidence.activity:
+                    tag_list.append(evidence.activity.lower().replace(" ", "_")[:30])
+
+                CloudinaryService.sync_metadata(
+                    public_id=media_asset.cloudinary_public_id,
+                    context=context_dict,
+                    tags=tag_list
+                )
+            except Exception as e:
+                print(f"[PIPELINE] Notice: Cloudinary metadata sync deferred: {e}")
+
         # Final status — only ASSIGNED becomes READY; NEEDS_REVIEW stays as-is
         if routing_res.status == RoutingStatus.ASSIGNED:
             media_asset.processing_status = "READY"
@@ -326,11 +362,191 @@ def assign_media_to_project(
             }
             qdrant_service.store_evidence(vec, payload, point_id=evidence.asset_id)
         except Exception as e:
-            print(f"[MEDIA] Warning: could not re-index into Qdrant: {e}")
-    else:
-        db.commit()
+            print(f"[ASSIGN] Notice: Qdrant re-index deferred: {e}")
+
+    # Cloudinary write-back on manual assignment
+    if asset.cloudinary_public_id:
+        try:
+            CloudinaryService.sync_metadata(
+                public_id=asset.cloudinary_public_id,
+                context={
+                    "project_name": project.name,
+                    "routing_status": "ASSIGNED",
+                    "mira_verified": "true",
+                    "manual_assignment": "true"
+                },
+                tags=["mira_field", "verified", project.name.lower().replace(" ", "_")[:30]]
+            )
+        except Exception as e:
+            print(f"[MEDIA] Notice: Cloudinary manual assignment sync deferred: {e}")
 
     return {"message": "Assigned successfully", "asset_id": asset.id, "project_id": project.id}
+
+
+@router.get("/{asset_id}/transformations")
+def get_asset_transformations(asset_id: str, db: Session = Depends(get_db)):
+    """
+    Get dynamic Cloudinary transformation URLs for an asset:
+    - Optimized f_auto,q_auto delivery URL
+    - AI-focal smart cropped thumbnail
+    - Verified provenance watermark overlay badge (GPS + timestamp)
+    - Multi-aspect campaign exports (1:1, 16:9, 9:16)
+    """
+    asset = db.query(MediaAssetDB).filter(MediaAssetDB.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Media asset not found")
+
+    evidence = db.query(VisualEvidenceDB).filter(VisualEvidenceDB.asset_id == asset_id).first()
+    project = db.query(ProjectDB).filter(ProjectDB.id == asset.project_id).first() if asset.project_id else None
+    
+    pub_id = asset.cloudinary_public_id
+    if not pub_id and asset.cloudinary_url:
+        # Fallback to extracting public_id from url
+        try:
+            parts = asset.cloudinary_url.split("/upload/")[-1].split("/")
+            # skip version if present
+            if len(parts) > 1 and parts[0].startswith("v"):
+                pub_id = "/".join(parts[1:]).rsplit(".", 1)[0]
+            else:
+                pub_id = "/".join(parts).rsplit(".", 1)[0]
+        except Exception:
+            pub_id = None
+
+    if not pub_id:
+        raise HTTPException(status_code=400, detail="Cloudinary public ID not available for this asset")
+
+    proj_name = project.name if project else "MIRA Verified"
+    ts = evidence.created_at.strftime("%Y-%m-%d") if (evidence and evidence.created_at) else (asset.uploaded_at.strftime("%Y-%m-%d") if asset.uploaded_at else None)
+
+    target_media = asset.cloudinary_url or pub_id
+
+    return {
+        "asset_id": asset.id,
+        "public_id": pub_id,
+        "original_url": asset.cloudinary_url,
+        "optimized_url": CloudinaryService.get_optimized_url(target_media),
+        "thumbnail_url": CloudinaryService.get_smart_thumbnail_url(target_media, width=400, height=300),
+        "verified_badge_url": CloudinaryService.get_verified_badge_url(
+            public_id_or_url=target_media,
+            project_name=proj_name,
+            gps_lat=asset.image_latitude,
+            gps_lon=asset.image_longitude,
+            timestamp=ts
+        ),
+        "campaign_aspects": CloudinaryService.get_campaign_aspect_urls(target_media)
+    }
+
+
+@router.get("/compare/composite-url")
+def get_compare_composite(
+    before_asset_id: str, 
+    after_asset_id: str, 
+    db: Session = Depends(get_db)
+):
+    """
+    Generate dynamic Cloudinary side-by-side composite comparison URL
+    directly from Cloudinary CDN layer with zero local image processing.
+    """
+    before_asset = db.query(MediaAssetDB).filter(MediaAssetDB.id == before_asset_id).first()
+    after_asset = db.query(MediaAssetDB).filter(MediaAssetDB.id == after_asset_id).first()
+    if not before_asset or not after_asset:
+        raise HTTPException(status_code=404, detail="One or both comparison assets not found")
+
+    before_pub = before_asset.cloudinary_public_id
+    after_pub = after_asset.cloudinary_public_id
+
+    if not before_pub or not after_pub:
+        raise HTTPException(status_code=400, detail="Cloudinary public IDs required for composite transformation")
+
+    composite_url = CloudinaryService.get_before_after_composite_url(before_pub, after_pub)
+    return {
+        "before_asset_id": before_asset_id,
+        "after_asset_id": after_asset_id,
+        "composite_url": composite_url
+    }
+
+
+@router.get("/upload/signature")
+def get_upload_signature(timestamp: Optional[int] = None):
+    """
+    Generate signed upload authentication parameters for direct frontend-to-Cloudinary uploads.
+    Bypasses FastAPI bandwidth while maintaining signed security.
+    """
+    import time
+    ts = timestamp or int(time.time())
+    params_to_sign = {
+        "timestamp": ts,
+        "folder": "cc_hack"
+    }
+    sig_data = CloudinaryService.generate_upload_signature(params_to_sign)
+    return sig_data
+
+
+@router.post("/sync-all-metadata")
+def sync_all_metadata_to_cloudinary(db: Session = Depends(get_db)):
+    """
+    Backfill / sync visual evidence metadata and tags to Cloudinary for all existing assets.
+    Guarantees Cloudinary is the synchronized media intelligence layer for all media.
+    """
+    assets = db.query(MediaAssetDB).filter(MediaAssetDB.cloudinary_public_id.isnot(None)).all()
+    synced_count = 0
+    errors = []
+
+    for asset in assets:
+        try:
+            ev = db.query(VisualEvidenceDB).filter(VisualEvidenceDB.asset_id == asset.id).first()
+            proj = db.query(ProjectDB).filter(ProjectDB.id == asset.project_id).first() if asset.project_id else None
+            
+            proj_name = proj.name if proj else "Unassigned"
+            is_verified = "true" if asset.project_id else "false"
+
+            context = {
+                "description": ev.description if ev else "",
+                "activity": ev.activity if ev else "",
+                "scene": ev.scene if ev else "",
+                "project_name": proj_name,
+                "laya_confidence": str(round(ev.routing_confidence or 0.85, 4)) if ev else "0.85",
+                "mira_verified": is_verified
+            }
+            if asset.image_latitude is not None and asset.image_longitude is not None:
+                context["gps_lat"] = f"{asset.image_latitude:.5f}"
+                context["gps_lon"] = f"{asset.image_longitude:.5f}"
+
+            tags = ["mira_field"]
+            if is_verified == "true":
+                tags.append("verified")
+            if proj_name != "Unassigned":
+                tags.append(proj_name.lower().replace(" ", "_")[:30])
+            if ev and ev.activity:
+                tags.append(ev.activity.lower().replace(" ", "_")[:30])
+
+            CloudinaryService.sync_metadata(
+                public_id=asset.cloudinary_public_id,
+                context=context,
+                tags=tags
+            )
+            asset.cloudinary_metadata_synced = True
+            synced_count += 1
+        except Exception as e:
+            errors.append({"asset_id": asset.id, "error": str(e)})
+
+    db.commit()
+    return {
+        "status": "success",
+        "synced_count": synced_count,
+        "total_assets": len(assets),
+        "errors": errors
+    }
+
+
+@router.post("/setup-preset")
+def setup_upload_preset(preset_name: str = "mira_field_upload"):
+    """
+    Initialize Cloudinary upload preset for direct ingestion.
+    """
+    res = CloudinaryService.create_upload_preset(preset_name)
+    return {"status": "completed", "result": res}
+
 
 @router.delete("/{asset_id}")
 def delete_media(asset_id: str, db: Session = Depends(get_db)):

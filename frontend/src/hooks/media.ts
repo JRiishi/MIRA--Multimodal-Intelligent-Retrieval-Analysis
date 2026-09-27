@@ -97,4 +97,30 @@ export function useAssignMedia() {
   });
 }
 
+export function useAssetTransformations(assetId: string | null) {
+  return useQuery({
+    queryKey: ['media', assetId, 'transformations'],
+    queryFn: async () => {
+      if (!assetId) return null;
+      const { data } = await api.get<import('../types').AssetTransformations>(`/media/${assetId}/transformations`);
+      return data;
+    },
+    enabled: !!assetId,
+  });
+}
+
+export function useSyncAllCloudinaryMetadata() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post('/media/sync-all-metadata');
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['media'] });
+    },
+  });
+}
+
 

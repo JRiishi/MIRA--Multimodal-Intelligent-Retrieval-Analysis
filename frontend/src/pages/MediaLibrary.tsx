@@ -1,15 +1,37 @@
 import React, { useState, useRef } from 'react';
-import { useMediaLibrary, useUploadMedia, useDeleteMedia } from '../hooks/media';
+import { useMediaLibrary, useUploadMedia, useDeleteMedia, useSyncAllCloudinaryMetadata, useAssetTransformations } from '../hooks/media';
 import { useProjects } from '../hooks/projects';
-import { UploadCloud, Image as ImageIcon, Loader2, AlertCircle, Trash2, MapPin, Navigation, X } from 'lucide-react';
+import { 
+  UploadCloud, 
+  Image as ImageIcon, 
+  Loader2, 
+  AlertCircle, 
+  Trash2, 
+  MapPin, 
+  Navigation, 
+  X, 
+  Sparkles, 
+  ShieldCheck, 
+  Layers, 
+  ExternalLink, 
+  Copy, 
+  Check, 
+  RefreshCw 
+} from 'lucide-react';
 import { format } from 'date-fns';
-import type { ProcessingStatus } from '../types';
+import type { ProcessingStatus, MediaAsset } from '../types';
 
 export default function MediaLibrary() {
   const { data: media, isLoading, error } = useMediaLibrary();
   const { data: projects } = useProjects();
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [activeAsset, setActiveAsset] = useState<MediaAsset | null>(null);
+  const [modalTab, setModalTab] = useState<'original' | 'provenance' | 'campaign'>('original');
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+
   const deleteMutation = useDeleteMedia();
+  const syncMetadataMutation = useSyncAllCloudinaryMetadata();
+  const { data: assetTransformations } = useAssetTransformations(activeAsset?.id || null);
 
   const getStatusDisplay = (status: ProcessingStatus) => {
     switch (status) {
@@ -41,20 +63,47 @@ export default function MediaLibrary() {
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
-      <header className="px-8 py-6 bg-white border-b border-gray-200 flex items-center justify-between">
+      <header className="px-8 py-5 bg-white border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Media Library</h1>
-          <p className="text-sm text-gray-500 mt-1">Upload field media with automatic or custom GPS geotagging.</p>
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-primary-50 text-primary-700 border border-primary-100 rounded-full text-[11px] font-semibold uppercase tracking-wider mb-1">
+            <Sparkles className="w-3 h-3 text-primary-600" />
+            Cloudinary Media Backbone
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Media Library</h1>
+          <p className="text-xs text-gray-500 mt-0.5">Automated visual intelligence, EXIF extraction, and Cloudinary explicit write-back.</p>
         </div>
         
-        <button 
-          onClick={() => setIsUploadModalOpen(true)}
-          className="btn-primary flex items-center gap-2"
-        >
-          <UploadCloud className="w-4 h-4" />
-          Upload Media
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => syncMetadataMutation.mutate()}
+            disabled={syncMetadataMutation.isPending}
+            className="btn-secondary text-xs flex items-center gap-1.5 py-2 px-3"
+            title="Sync all evidence metadata, GPS, and tags to Cloudinary"
+          >
+            {syncMetadataMutation.isPending ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-600" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5 text-gray-600" />
+            )}
+            <span>{syncMetadataMutation.isPending ? 'Syncing to Cloudinary...' : 'Sync Cloudinary Metadata'}</span>
+          </button>
+
+          <button 
+            onClick={() => setIsUploadModalOpen(true)}
+            className="btn-primary flex items-center gap-1.5 text-xs py-2 px-3.5"
+          >
+            <UploadCloud className="w-4 h-4" />
+            Upload Media
+          </button>
+        </div>
       </header>
+
+      {syncMetadataMutation.isSuccess && (
+        <div className="mx-8 mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex justify-between items-center animate-in fade-in">
+          <span>✓ Successfully synchronized visual evidence context and tags across Cloudinary assets!</span>
+          <span className="font-bold">{syncMetadataMutation.data?.synced_count} assets updated</span>
+        </div>
+      )}
 
       <div className="flex-1 p-8 overflow-y-auto">
         {isLoading ? (
@@ -88,7 +137,14 @@ export default function MediaLibrary() {
               const StatusIcon = status.icon;
               
               return (
-                <div key={asset.id} className="card group cursor-pointer flex flex-col h-[290px]">
+                <div 
+                  key={asset.id} 
+                  onClick={() => {
+                    setActiveAsset(asset);
+                    setModalTab('original');
+                  }}
+                  className="card group cursor-pointer flex flex-col h-[290px] border border-gray-200 hover:shadow-lg transition-all"
+                >
                   {/* Image Area */}
                   <div className="relative flex-1 bg-gray-100 overflow-hidden">
                     {asset.cloudinary_url ? (
@@ -160,6 +216,183 @@ export default function MediaLibrary() {
           </div>
         )}
       </div>
+
+      {/* Cloudinary Lightbox Modal */}
+      {activeAsset && (
+        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden border border-gray-200" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-3.5 border-b border-gray-100 flex justify-between items-center bg-gray-50/70">
+              <span className="text-xs font-bold text-gray-900 uppercase tracking-wider">Cloudinary Media Transformations</span>
+              <button onClick={() => setActiveAsset(null)} className="text-gray-400 hover:text-gray-600 p-1 rounded-full">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Mode Tabs */}
+            <div className="px-5 pt-3 pb-2 bg-gray-50 border-b border-gray-200 flex items-center gap-1.5 overflow-x-auto flex-shrink-0">
+              <button
+                onClick={() => setModalTab('original')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                  modalTab === 'original' ? 'bg-white text-gray-900 shadow-xs border border-gray-200' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <span>Original Delivery</span>
+              </button>
+              <button
+                onClick={() => setModalTab('provenance')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                  modalTab === 'provenance' ? 'bg-emerald-50 text-emerald-800 shadow-xs border border-emerald-200' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> Provenance Watermark
+              </button>
+              <button
+                onClick={() => setModalTab('campaign')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                  modalTab === 'campaign' ? 'bg-primary-50 text-primary-800 shadow-xs border border-primary-200' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-primary-600" /> Campaign Crops
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
+              <div className="rounded-xl overflow-hidden border border-gray-200 aspect-video bg-gray-950 flex items-center justify-center relative">
+                {modalTab === 'original' && (
+                  <img 
+                    src={assetTransformations?.optimized_url || activeAsset.cloudinary_url || ''} 
+                    alt="Original Delivery" 
+                    onError={(e) => {
+                      if (activeAsset.cloudinary_url && e.currentTarget.src !== activeAsset.cloudinary_url) {
+                        e.currentTarget.src = activeAsset.cloudinary_url;
+                      }
+                    }}
+                    className="max-h-64 w-full object-contain"
+                  />
+                )}
+
+                {modalTab === 'provenance' && (
+                  <img 
+                    src={assetTransformations?.verified_badge_url || activeAsset.cloudinary_url || ''} 
+                    alt="Provenance Watermarked" 
+                    onError={(e) => {
+                      if (activeAsset.cloudinary_url && e.currentTarget.src !== activeAsset.cloudinary_url) {
+                        e.currentTarget.src = activeAsset.cloudinary_url;
+                      }
+                    }}
+                    className="max-h-64 w-full object-contain"
+                  />
+                )}
+
+                {modalTab === 'campaign' && (
+                  <div className="grid grid-cols-3 gap-2 p-2 w-full h-full items-center bg-gray-900">
+                    <div className="space-y-1 text-center">
+                      <div className="aspect-square bg-black rounded border border-gray-700 overflow-hidden">
+                        <img 
+                          src={assetTransformations?.campaign_aspects?.square_1_1 || activeAsset.cloudinary_url || ''} 
+                          alt="Square 1:1"
+                          onError={(e) => {
+                            if (activeAsset.cloudinary_url && e.currentTarget.src !== activeAsset.cloudinary_url) {
+                              e.currentTarget.src = activeAsset.cloudinary_url;
+                            }
+                          }}
+                          className="w-full h-full object-cover" 
+                        />
+                      </div>
+                      <span className="text-[10px] text-gray-300 font-mono">1:1 Square</span>
+                    </div>
+                    <div className="space-y-1 text-center">
+                      <div className="aspect-video bg-black rounded border border-gray-700 overflow-hidden">
+                        <img 
+                          src={assetTransformations?.campaign_aspects?.landscape_16_9 || activeAsset.cloudinary_url || ''} 
+                          alt="Landscape 16:9"
+                          onError={(e) => {
+                            if (activeAsset.cloudinary_url && e.currentTarget.src !== activeAsset.cloudinary_url) {
+                              e.currentTarget.src = activeAsset.cloudinary_url;
+                            }
+                          }}
+                          className="w-full h-full object-cover" 
+                        />
+                      </div>
+                      <span className="text-[10px] text-gray-300 font-mono">16:9 Landscape</span>
+                    </div>
+                    <div className="space-y-1 text-center">
+                      <div className="aspect-[9/16] max-h-44 mx-auto bg-black rounded border border-gray-700 overflow-hidden">
+                        <img 
+                          src={assetTransformations?.campaign_aspects?.story_9_16 || activeAsset.cloudinary_url || ''} 
+                          alt="Story 9:16"
+                          onError={(e) => {
+                            if (activeAsset.cloudinary_url && e.currentTarget.src !== activeAsset.cloudinary_url) {
+                              e.currentTarget.src = activeAsset.cloudinary_url;
+                            }
+                          }}
+                          className="w-full h-full object-cover" 
+                        />
+                      </div>
+                      <span className="text-[10px] text-gray-300 font-mono">9:16 Story</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs space-y-1">
+                <p className="font-semibold text-gray-900">Project: {getProjectName(activeAsset.project_id)}</p>
+                {activeAsset.image_latitude != null && activeAsset.image_longitude != null && (
+                  <p className="text-primary-700 font-mono">GPS: {activeAsset.image_latitude.toFixed(5)}N, {activeAsset.image_longitude.toFixed(5)}E ({activeAsset.location_source})</p>
+                )}
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-between items-center flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    let urlToCopy = activeAsset.cloudinary_url;
+                    if (modalTab === 'provenance' && assetTransformations?.verified_badge_url) {
+                      urlToCopy = assetTransformations.verified_badge_url;
+                    } else if (modalTab === 'campaign' && assetTransformations?.campaign_aspects?.square_1_1) {
+                      urlToCopy = assetTransformations.campaign_aspects.square_1_1;
+                    } else if (assetTransformations?.optimized_url) {
+                      urlToCopy = assetTransformations.optimized_url;
+                    }
+                    if (urlToCopy) {
+                      navigator.clipboard.writeText(urlToCopy);
+                      setCopiedUrl('lib_modal');
+                      setTimeout(() => setCopiedUrl(null), 2000);
+                    }
+                  }}
+                  className="btn-secondary text-xs flex items-center gap-1.5 py-1 px-3"
+                >
+                  {copiedUrl === 'lib_modal' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedUrl === 'lib_modal' ? 'Copied URL!' : 'Copy Transformation URL'}
+                </button>
+                <a 
+                  href={
+                    modalTab === 'provenance'
+                      ? (assetTransformations?.verified_badge_url || activeAsset.cloudinary_url || '')
+                      : modalTab === 'campaign'
+                      ? (assetTransformations?.campaign_aspects?.square_1_1 || activeAsset.cloudinary_url || '')
+                      : (assetTransformations?.optimized_url || activeAsset.cloudinary_url || '')
+                  } 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="btn-secondary text-xs flex items-center gap-1 py-1 px-3"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" /> Open HD
+                </a>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setActiveAsset(null)} 
+                className="btn-primary text-xs py-1 px-4"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isUploadModalOpen && (
         <UploadMediaModal onClose={() => setIsUploadModalOpen(false)} />

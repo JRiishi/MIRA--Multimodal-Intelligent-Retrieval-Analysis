@@ -24,6 +24,9 @@ def search_evidence_get(
     project_id: Optional[str] = Query(None),
     activity: Optional[str] = Query(None),
     location: Optional[str] = Query(None),
+    use_cloudinary_hybrid: bool = Query(False, description="Enable Cloudinary Search API Hybrid Merging"),
+    cloudinary_tag: Optional[str] = Query(None, description="Filter by Cloudinary tag"),
+    cloudinary_expression: Optional[str] = Query(None, description="Custom Cloudinary Search expression"),
     top_k: int = Query(10, ge=1, le=100),
     min_score: float = Query(0.35, ge=0.0, le=1.0, description="Minimum similarity threshold"),
     db: Session = Depends(get_db)
@@ -37,6 +40,9 @@ def search_evidence_get(
         project_id=project_id,
         activity=activity,
         location=location,
+        use_cloudinary_hybrid=use_cloudinary_hybrid,
+        cloudinary_tag=cloudinary_tag,
+        cloudinary_expression=cloudinary_expression,
         top_k=top_k,
         min_score=min_score
     )

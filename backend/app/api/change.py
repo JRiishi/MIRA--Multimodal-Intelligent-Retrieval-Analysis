@@ -7,6 +7,7 @@ from app.database import get_db
 from app.models.media import MediaAssetDB
 from app.services.change_service import ChangeService
 from app.services.project_context_service import ProjectContextService
+from app.services.cloudinary_service import CloudinaryService
 
 router = APIRouter(tags=["change"])
 
@@ -31,6 +32,12 @@ def analyze_change(req: ChangeRequest, db: Session = Depends(get_db)):
     result["after_asset_id"] = after.id
     result["before_url"] = before.cloudinary_url
     result["after_url"] = after.cloudinary_url
+    
+    # Generate Cloudinary zero-compute composite URL
+    if before.cloudinary_public_id and after.cloudinary_public_id:
+        result["composite_url"] = CloudinaryService.get_before_after_composite_url(
+            before.cloudinary_public_id, after.cloudinary_public_id
+        )
     return result
 
 
@@ -68,4 +75,10 @@ def project_change_analysis(
     result["after_asset_id"] = after.id
     result["before_url"] = before.cloudinary_url
     result["after_url"] = after.cloudinary_url
+
+    # Generate Cloudinary zero-compute composite URL
+    if before.cloudinary_public_id and after.cloudinary_public_id:
+        result["composite_url"] = CloudinaryService.get_before_after_composite_url(
+            before.cloudinary_public_id, after.cloudinary_public_id
+        )
     return result

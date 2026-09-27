@@ -6,8 +6,8 @@ from app.services.embedding_service import EmbeddingService
 from app.services.qdrant_service import QdrantService
 from app.schemas.search import SearchRequest, SearchResponse, SearchResultItem
 from app.models.project import ProjectDB
-from app.models.media import VisualEvidenceDB
-
+from app.models.media import VisualEvidenceDB, MediaAssetDB
+from app.services.cloudinary_service import CloudinaryService
 
 
 def normalize_text(text: str) -> str:
@@ -99,26 +99,52 @@ class SearchService:
 
     def search(self, request: SearchRequest, db: Optional[Session] = None) -> SearchResponse:
         """
-        Execute semantic similarity search over visual evidence documents with metadata filters.
+        Execute hybrid similarity search combining Cloudinary Search API expressions with Qdrant semantic vectors.
         """
         query_text = normalize_text(request.query)
-        if not query_text:
-            return SearchResponse(query=request.query, results=[], count=0)
+        if not query_text and not request.cloudinary_expression and not request.cloudinary_tag:
+            return SearchResponse(query=request.query, results=[], count=0, hybrid_mode=False)
 
         min_threshold = request.min_score if request.min_score is not None else 0.35
-        print(f"[SEARCH] Query: '{request.query}' (Normalized: '{query_text}') | top_k: {request.top_k} | min_score: {min_threshold}")
-        if request.project_id:
-            print(f"[SEARCH] Filter project_id: {request.project_id}")
-        if request.activity:
-            print(f"[SEARCH] Filter activity: {request.activity}")
-        if request.location:
-            print(f"[SEARCH] Filter location: {request.location}")
+        is_hybrid = bool(request.use_cloudinary_hybrid or request.cloudinary_expression or request.cloudinary_tag)
+        print(f"[SEARCH] Query: '{request.query}' | top_k: {request.top_k} | min_score: {min_threshold} | hybrid: {is_hybrid}")
 
-        # 1. Generate query vector using MiniLM
-        query_vector = self.embedding_service.get_embedding(query_text)
+        # 1. Cloudinary Search API Layer (if hybrid requested)
+        cloudinary_matched_pub_ids = set()
+        cld_asset_map = {}
+        if is_hybrid:
+            try:
+                expr_parts = []
+                if request.cloudinary_expression:
+                    expr_parts.append(request.cloudinary_expression)
+                else:
+                    expr_parts.append("folder:cc_hack")
+                    if request.cloudinary_tag:
+                        clean_tag = request.cloudinary_tag.strip().replace(" ", "_")
+                        expr_parts.append(f"tags:{clean_tag}")
+                    if request.activity:
+                        clean_act = request.activity.strip().lower().replace(" ", "_")
+                        expr_parts.append(f"tags:{clean_act}*")
+                    
+                    if request.query and not request.cloudinary_tag:
+                        q_words = [w.strip() for w in request.query.split() if len(w.strip()) > 3]
+                        if q_words:
+                            tag_clauses = " OR ".join(f"tags:{w}*" for w in q_words[:3])
+                            expr_parts.append(f"({tag_clauses})")
 
-        # 2. Search Qdrant
-        # Retrieve extra hits if date filtering is requested
+                cld_expr = " AND ".join(expr_parts)
+                cld_resources = CloudinaryService.search_assets(cld_expr, max_results=30)
+                for res in cld_resources:
+                    pub = res.get("public_id")
+                    if pub:
+                        cloudinary_matched_pub_ids.add(pub)
+                        cld_asset_map[pub] = res
+                print(f"[SEARCH] Cloudinary Search API matched {len(cloudinary_matched_pub_ids)} assets for expr: '{cld_expr}'")
+            except Exception as e:
+                print(f"[SEARCH] Notice: Cloudinary hybrid search error: {e}")
+
+        # 2. Generate query vector using MiniLM & Search Qdrant
+        query_vector = self.embedding_service.get_embedding(query_text or "evidence")
         fetch_limit = request.top_k * 2 if (request.date_from or request.date_to) else request.top_k
         hits = self.qdrant_service.search_evidence(
             vector=query_vector,
@@ -127,33 +153,42 @@ class SearchService:
             activity=request.activity,
             location=request.location
         )
-
         print(f"[SEARCH] Qdrant returned {len(hits)} raw hits.")
 
         # Cache project names if DB session is available
         project_name_map = {}
+        asset_pub_id_map = {}
         if db:
             try:
                 projects = db.query(ProjectDB).all()
                 project_name_map = {p.id: p.name for p in projects}
+                all_assets = db.query(MediaAssetDB).all()
+                asset_pub_id_map = {a.id: a.cloudinary_public_id for a in all_assets if a.cloudinary_public_id}
             except Exception as e:
-                print(f"[SEARCH] Warning: Could not pre-fetch project names from DB: {e}")
+                print(f"[SEARCH] Warning: Could not pre-fetch project/asset names from DB: {e}")
 
-        # 3. Format and filter results
+        # 3. Format and filter Qdrant results & compute hybrid score
         formatted_results: List[SearchResultItem] = []
+        seen_asset_ids = set()
 
         for hit in hits:
             payload = hit.payload or {}
-            score = round(float(hit.score), 4)
+            raw_score = round(float(hit.score), 4)
             asset_id = payload.get("asset_id", str(hit.id))
             proj_id = payload.get("project_id")
+            pub_id = asset_pub_id_map.get(asset_id)
 
-            # Strict threshold check: Only display images crossing threshold
-            if score < min_threshold:
-                print(f"[SEARCH]   Filtered out hit {asset_id} (score {score:.4f} < threshold {min_threshold})")
+            # Strict threshold check
+            if raw_score < min_threshold and not (pub_id and pub_id in cloudinary_matched_pub_ids):
                 continue
 
-            
+            # Determine match source & hybrid score boost
+            source = "QDRANT_VECTOR"
+            score = raw_score
+            if pub_id and pub_id in cloudinary_matched_pub_ids:
+                source = "HYBRID"
+                score = round(min(0.99, raw_score * 0.65 + 0.35), 4)
+
             # Resolve project name
             proj_name = payload.get("project_name")
             if not proj_name and proj_id and proj_id in project_name_map:
@@ -162,22 +197,16 @@ class SearchService:
             loc_str = payload.get("location_name") or payload.get("location") or ""
             act_str = payload.get("activity") or ""
 
-            # Flexible location filtering (case-insensitive substring)
             if request.location and request.location.strip().lower() not in loc_str.lower():
                 continue
-
-            # Flexible activity filtering (case-insensitive substring)
             if request.activity and request.activity.strip().lower() not in act_str.lower():
                 continue
 
             timestamp_str = payload.get("timestamp")
-            
-            # Optional date filtering
             if request.date_from and timestamp_str and timestamp_str < request.date_from:
                 continue
             if request.date_to and timestamp_str and timestamp_str > request.date_to:
                 continue
-
 
             # Parse objects list safely
             raw_objects = payload.get("objects", [])
@@ -208,6 +237,7 @@ class SearchService:
                 project_id=proj_id,
                 project_name=proj_name,
                 cloudinary_url=payload.get("cloudinary_url", ""),
+                cloudinary_public_id=pub_id,
                 description=payload.get("description", ""),
                 activity=payload.get("activity"),
                 scene=payload.get("scene"),
@@ -217,18 +247,56 @@ class SearchService:
                 location=payload.get("location_name") or payload.get("location"),
                 latitude=payload.get("latitude"),
                 longitude=payload.get("longitude"),
-                score=score
+                score=score,
+                search_source=source
             )
             formatted_results.append(item)
-            print(f"[SEARCH]   Hit: asset={asset_id} | score={score:.4f} | project='{proj_name}' | desc='{item.description[:60]}...'")
+            seen_asset_ids.add(asset_id)
 
-            if len(formatted_results) >= request.top_k:
-                break
+        # 4. If hybrid search is enabled, include pure Cloudinary Search API matches not yet in vector results
+        if is_hybrid and db and cloudinary_matched_pub_ids:
+            try:
+                for pub_id in cloudinary_matched_pub_ids:
+                    asset = db.query(MediaAssetDB).filter(MediaAssetDB.cloudinary_public_id == pub_id).first()
+                    if asset and asset.id not in seen_asset_ids:
+                        ev = db.query(VisualEvidenceDB).filter(VisualEvidenceDB.asset_id == asset.id).first()
+                        proj = db.query(ProjectDB).filter(ProjectDB.id == asset.project_id).first() if asset.project_id else None
+                        
+                        desc = ev.description if ev else (cld_asset_map.get(pub_id, {}).get("context", {}).get("description", "Cloudinary tagged asset"))
+                        act = ev.activity if ev else (cld_asset_map.get(pub_id, {}).get("context", {}).get("activity"))
+                        
+                        item = SearchResultItem(
+                            asset_id=asset.id,
+                            project_id=asset.project_id,
+                            project_name=proj.name if proj else None,
+                            cloudinary_url=asset.cloudinary_url or "",
+                            cloudinary_public_id=pub_id,
+                            description=desc or "Cloudinary Search API metadata match",
+                            activity=act,
+                            scene=ev.scene if ev else None,
+                            objects=[],
+                            project_signals=[],
+                            timestamp=asset.uploaded_at.isoformat() if asset.uploaded_at else None,
+                            location=proj.location_name if proj else None,
+                            latitude=asset.image_latitude,
+                            longitude=asset.image_longitude,
+                            score=0.82,
+                            search_source="CLOUDINARY_SEARCH"
+                        )
+                        formatted_results.append(item)
+                        seen_asset_ids.add(asset.id)
+            except Exception as e:
+                print(f"[SEARCH] Notice: Error merging pure Cloudinary matches: {e}")
+
+        # Sort all results by score descending
+        formatted_results.sort(key=lambda x: x.score, reverse=True)
+        final_results = formatted_results[:request.top_k]
 
         return SearchResponse(
             query=request.query,
-            results=formatted_results,
-            count=len(formatted_results)
+            results=final_results,
+            count=len(final_results),
+            hybrid_mode=is_hybrid
         )
 
     def sync_all_from_db(self, db: Session) -> int:

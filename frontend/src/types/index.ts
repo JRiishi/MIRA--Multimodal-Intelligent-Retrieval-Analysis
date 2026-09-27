@@ -54,6 +54,7 @@ export interface SearchResultItem {
   project_id?: string | null;
   project_name?: string | null;
   cloudinary_url: string;
+  cloudinary_public_id?: string | null;
   description: string;
   activity?: string | null;
   scene?: string | null;
@@ -64,12 +65,14 @@ export interface SearchResultItem {
   latitude?: number | null;
   longitude?: number | null;
   score: number;
+  search_source?: string | null;
 }
 
 export interface SearchResponse {
   query: string;
   results: SearchResultItem[];
   count: number;
+  hybrid_mode?: boolean;
 }
 
 export interface ChatEvidenceItem {
@@ -132,9 +135,24 @@ export interface ChangeAnalysisResult {
   after_asset_id: string;
   before_url: string;
   after_url: string;
+  composite_url?: string;
   change_detected: boolean;
   change_score: number;
   summary: string;
+}
+
+export interface AssetTransformations {
+  asset_id: string;
+  public_id: string;
+  original_url: string;
+  optimized_url: string;
+  thumbnail_url: string;
+  verified_badge_url: string;
+  campaign_aspects: {
+    square_1_1: string;
+    landscape_16_9: string;
+    story_9_16: string;
+  };
 }
 
 

@@ -22,6 +22,8 @@ def ensure_schema_updated():
         ("media_assets", "image_longitude", "REAL"),
         ("media_assets", "location_source", "TEXT DEFAULT 'NONE'"),
         ("media_assets", "location_match_distance", "REAL"),
+        ("media_assets", "original_public_id", "TEXT"),
+        ("media_assets", "cloudinary_metadata_synced", "BOOLEAN DEFAULT 0"),
         ("visual_evidence", "latitude", "REAL"),
         ("visual_evidence", "longitude", "REAL"),
         ("visual_evidence", "location_source", "TEXT DEFAULT 'NONE'"),

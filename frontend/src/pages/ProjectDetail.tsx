@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useProject, useDeleteProject } from '../hooks/projects';
-import { useMediaLibrary } from '../hooks/media';
+import { useMediaLibrary, useAssetTransformations } from '../hooks/media';
 import { 
   useProjectChat, 
   useProjectChatHistory, 
@@ -28,7 +28,12 @@ import {
   RefreshCw, 
   FileBarChart2, 
   Printer, 
-  AlertCircle 
+  AlertCircle,
+  Copy,
+  Check,
+  ShieldCheck,
+  Layers,
+  Sliders
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx } from 'clsx';
@@ -72,6 +77,15 @@ export default function ProjectDetail() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [activeEvidenceModal, setActiveEvidenceModal] = useState<ChatEvidenceItem | null>(null);
+
+  // Cloudinary Before/After showcase state
+  const [comparisonMode, setComparisonMode] = useState<'slider' | 'side_by_side' | 'composite'>('slider');
+  const [sliderPos, setSliderPos] = useState<number>(50);
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+
+  // Cloudinary Lightbox Modal state
+  const [modalTab, setModalTab] = useState<'original' | 'provenance' | 'campaign'>('original');
+  const { data: assetTransformations } = useAssetTransformations(activeEvidenceModal?.asset_id || null);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const projectMedia = allMedia?.filter(m => m.project_id === projectId) || [];
@@ -458,58 +472,221 @@ export default function ProjectDetail() {
                     </div>
                   </div>
 
-                  {/* Side by Side Image Comparison Cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Before Card */}
-                    <div className="border border-gray-200 rounded-xl overflow-hidden bg-slate-50/50 shadow-2xs flex flex-col">
-                      <div className="px-4 py-2.5 bg-slate-100 border-b border-gray-200 flex justify-between items-center text-xs">
-                        <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-slate-500"></span> BEFORE (Baseline State)
-                        </span>
-                        <span className="text-[10px] font-medium text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
-                          Initial Capture
-                        </span>
-                      </div>
-                      <div 
-                        onClick={() => setActiveEvidenceModal({
-                          asset_id: 'before_asset',
-                          cloudinary_url: changeMutation.data.before_url,
-                          description: 'Initial project baseline evidence capture.',
-                        })}
-                        className="aspect-video bg-black/5 flex items-center justify-center cursor-pointer group relative overflow-hidden"
+                  {/* Mode Selector Tabs */}
+                  <div className="flex items-center justify-between border-b border-gray-200 pb-3">
+                    <div className="flex items-center gap-1.5 p-1 bg-gray-100 rounded-lg">
+                      <button
+                        onClick={() => setComparisonMode('slider')}
+                        className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                          comparisonMode === 'slider' ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                        }`}
                       >
-                        <img src={changeMutation.data.before_url} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-semibold gap-1">
-                          <ExternalLink className="w-3.5 h-3.5" /> Inspect Baseline
-                        </div>
-                      </div>
+                        <Sliders className="w-3.5 h-3.5" /> Interactive Slider
+                      </button>
+                      <button
+                        onClick={() => setComparisonMode('side_by_side')}
+                        className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                          comparisonMode === 'side_by_side' ? 'bg-white text-gray-900 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                      >
+                        <Layers className="w-3.5 h-3.5" /> Side-by-Side
+                      </button>
+                      <button
+                        onClick={() => setComparisonMode('composite')}
+                        className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                          comparisonMode === 'composite' ? 'bg-white text-primary-700 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-primary-600" /> Cloudinary Composite URL
+                      </button>
                     </div>
 
-                    {/* After Card */}
-                    <div className="border border-emerald-200 rounded-xl overflow-hidden bg-emerald-50/30 shadow-2xs flex flex-col">
-                      <div className="px-4 py-2.5 bg-emerald-100/70 border-b border-emerald-200 flex justify-between items-center text-xs">
-                        <span className="font-bold text-emerald-900 flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> AFTER (Latest Observation)
-                        </span>
-                        <span className="text-[10px] font-medium text-emerald-800 bg-white px-2 py-0.5 rounded border border-emerald-200">
-                          Current Stage
-                        </span>
+                    <div className="text-[11px] text-gray-500 hidden sm:block">
+                      {comparisonMode === 'slider' && 'Drag slider horizontally to reveal progression'}
+                      {comparisonMode === 'side_by_side' && 'Comparing baseline against latest observation'}
+                      {comparisonMode === 'composite' && 'Zero-compute composite rendered by Cloudinary CDN'}
+                    </div>
+                  </div>
+
+                  {/* 1. INTERACTIVE SLIDER VIEW */}
+                  {comparisonMode === 'slider' && (
+                    <div className="space-y-3">
+                      <div className="relative aspect-video rounded-2xl overflow-hidden border border-gray-300 shadow-sm bg-black select-none group">
+                        {/* After Image (Background) */}
+                        <img 
+                          src={changeMutation.data.after_url} 
+                          alt="After" 
+                          className="absolute inset-0 w-full h-full object-cover" 
+                        />
+                        <div className="absolute top-3 right-3 px-2.5 py-1 bg-emerald-600/90 backdrop-blur-sm text-white text-[10px] font-bold rounded-md shadow-xs">
+                          AFTER (Current)
+                        </div>
+
+                        {/* Before Image (Clipped Overlay) */}
+                        <div 
+                          className="absolute inset-0 overflow-hidden" 
+                          style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }}
+                        >
+                          <img 
+                            src={changeMutation.data.before_url} 
+                            alt="Before" 
+                            className="absolute inset-0 w-full h-full object-cover" 
+                          />
+                          <div className="absolute top-3 left-3 px-2.5 py-1 bg-slate-900/90 backdrop-blur-sm text-white text-[10px] font-bold rounded-md shadow-xs">
+                            BEFORE (Baseline)
+                          </div>
+                        </div>
+
+                        {/* Vertical Divider Line & Thumb */}
+                        <div 
+                          className="absolute top-0 bottom-0 w-0.5 bg-white shadow-[0_0_10px_rgba(0,0,0,0.5)] flex items-center justify-center pointer-events-none"
+                          style={{ left: `${sliderPos}%` }}
+                        >
+                          <div className="w-8 h-8 bg-white text-gray-800 rounded-full shadow-lg border border-gray-200 flex items-center justify-center font-bold text-xs pointer-events-auto cursor-ew-resize">
+                            ↔
+                          </div>
+                        </div>
+
+                        {/* Hidden Range Input for smooth drag control */}
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={sliderPos}
+                          onChange={(e) => setSliderPos(Number(e.target.value))}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20"
+                        />
                       </div>
-                      <div 
-                        onClick={() => setActiveEvidenceModal({
-                          asset_id: 'after_asset',
-                          cloudinary_url: changeMutation.data.after_url,
-                          description: 'Latest verified progress observation.',
-                        })}
-                        className="aspect-video bg-black/5 flex items-center justify-center cursor-pointer group relative overflow-hidden"
-                      >
-                        <img src={changeMutation.data.after_url} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-semibold gap-1">
-                          <ExternalLink className="w-3.5 h-3.5" /> Inspect Progress
+
+                      <div className="flex justify-between items-center text-xs text-gray-500 px-1">
+                        <span>← Drag to see Baseline (Before)</span>
+                        <span className="font-mono text-[11px] bg-gray-100 px-2 py-0.5 rounded text-gray-700">{sliderPos}% Split</span>
+                        <span>Drag to see Current (After) →</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 2. SIDE BY SIDE VIEW */}
+                  {comparisonMode === 'side_by_side' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Before Card */}
+                      <div className="border border-gray-200 rounded-xl overflow-hidden bg-slate-50/50 shadow-2xs flex flex-col">
+                        <div className="px-4 py-2.5 bg-slate-100 border-b border-gray-200 flex justify-between items-center text-xs">
+                          <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-slate-500"></span> BEFORE (Baseline State)
+                          </span>
+                          <span className="text-[10px] font-medium text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
+                            Initial Capture
+                          </span>
+                        </div>
+                        <div 
+                          onClick={() => setActiveEvidenceModal({
+                            asset_id: changeMutation.data.before_asset_id,
+                            cloudinary_url: changeMutation.data.before_url,
+                            description: 'Initial project baseline evidence capture.',
+                          })}
+                          className="aspect-video bg-black/5 flex items-center justify-center cursor-pointer group relative overflow-hidden"
+                        >
+                          <img src={changeMutation.data.before_url} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-semibold gap-1">
+                            <ExternalLink className="w-3.5 h-3.5" /> Inspect Baseline
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* After Card */}
+                      <div className="border border-emerald-200 rounded-xl overflow-hidden bg-emerald-50/30 shadow-2xs flex flex-col">
+                        <div className="px-4 py-2.5 bg-emerald-100/70 border-b border-emerald-200 flex justify-between items-center text-xs">
+                          <span className="font-bold text-emerald-900 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> AFTER (Latest Observation)
+                          </span>
+                          <span className="text-[10px] font-medium text-emerald-800 bg-white px-2 py-0.5 rounded border border-emerald-200">
+                            Current Stage
+                          </span>
+                        </div>
+                        <div 
+                          onClick={() => setActiveEvidenceModal({
+                            asset_id: changeMutation.data.after_asset_id,
+                            cloudinary_url: changeMutation.data.after_url,
+                            description: 'Latest verified progress observation.',
+                          })}
+                          className="aspect-video bg-black/5 flex items-center justify-center cursor-pointer group relative overflow-hidden"
+                        >
+                          <img src={changeMutation.data.after_url} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-semibold gap-1">
+                            <ExternalLink className="w-3.5 h-3.5" /> Inspect Progress
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
+                  )}
+
+                  {/* 3. CLOUDINARY COMPOSITE TRANSFORMATION VIEW */}
+                  {comparisonMode === 'composite' && (
+                    <div className="space-y-4">
+                      <div className="p-4 bg-gradient-to-br from-primary-900 via-slate-900 to-indigo-950 text-white rounded-2xl border border-primary-800/40 shadow-md space-y-4">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                          <div>
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary-500/30 border border-primary-400/40 rounded-full text-[10px] font-bold text-primary-200 uppercase tracking-wider mb-1">
+                              <Sparkles className="w-3 h-3 text-primary-300" /> Cloudinary Dynamic Composite Transformation
+                            </div>
+                            <h4 className="text-sm font-bold text-white">Dual-Layer Zero-Compute CDN Composite</h4>
+                            <p className="text-xs text-gray-300 mt-0.5">
+                              Dual-layer visual proof constructed on-the-fly via Cloudinary layer transformations without server CPU usage.
+                            </p>
+                          </div>
+
+                          {changeMutation.data.composite_url && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(changeMutation.data.composite_url!);
+                                  setCopiedUrl('composite');
+                                  setTimeout(() => setCopiedUrl(null), 2000);
+                                }}
+                                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-semibold rounded-lg border border-white/20 flex items-center gap-1.5 transition-colors"
+                              >
+                                {copiedUrl === 'composite' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                {copiedUrl === 'composite' ? 'Copied URL!' : 'Copy Composite URL'}
+                              </button>
+                              <a
+                                href={changeMutation.data.composite_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3 py-1.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-sm transition-colors"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" /> Open HD
+                              </a>
+                            </div>
+                          )}
+                        </div>
+
+                        {changeMutation.data.composite_url ? (
+                          <div className="rounded-xl overflow-hidden border border-white/10 bg-black/40 aspect-[2/1] flex items-center justify-center">
+                            <img 
+                              src={changeMutation.data.composite_url} 
+                              alt="Cloudinary Composite" 
+                              className="w-full h-full object-contain"
+                            />
+                          </div>
+                        ) : (
+                          <div className="p-8 text-center text-xs text-gray-400 bg-white/5 rounded-xl">
+                            Composite transformation URL is ready when both Cloudinary public IDs are assigned.
+                          </div>
+                        )}
+
+                        {changeMutation.data.composite_url && (
+                          <div className="p-3 bg-black/40 rounded-xl border border-white/10">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Generated Dynamic URL</span>
+                            <code className="text-[11px] font-mono text-primary-300 break-all select-all">
+                              {changeMutation.data.composite_url}
+                            </code>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               )}
             </div>
@@ -774,49 +951,206 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      {/* Evidence Detail Lightbox Modal */}
+      {/* Evidence Detail Lightbox Modal with Cloudinary Transformations */}
       {activeEvidenceModal && (
-        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-200" onClick={e => e.stopPropagation()}>
-            <div className="px-5 py-3.5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-              <span className="text-xs font-bold text-gray-900 uppercase tracking-wider">Visual Evidence Detail</span>
+        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden border border-gray-200 flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 border-b border-gray-100 flex justify-between items-center bg-gray-50/70 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-xs font-bold text-gray-900 uppercase tracking-wider">Cloudinary Media Intelligence</span>
+              </div>
               <button onClick={() => setActiveEvidenceModal(null)} className="text-gray-400 hover:text-gray-600 p-1 rounded-full">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-5 space-y-3">
-              {activeEvidenceModal.cloudinary_url && (
-                <div className="rounded-xl overflow-hidden border border-gray-200 aspect-video bg-black/5 flex items-center justify-center">
-                  <img src={activeEvidenceModal.cloudinary_url} className="max-h-64 w-full object-contain" />
-                </div>
-              )}
+            {/* Cloudinary Transformation Mode Tabs */}
+            <div className="px-5 pt-3 pb-2 bg-gray-50 border-b border-gray-200 flex items-center gap-1.5 flex-shrink-0 overflow-x-auto">
+              <button
+                onClick={() => setModalTab('original')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                  modalTab === 'original' ? 'bg-white text-gray-900 shadow-xs border border-gray-200' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <ImageIcon className="w-3.5 h-3.5" /> Original Delivery
+              </button>
+              <button
+                onClick={() => setModalTab('provenance')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                  modalTab === 'provenance' ? 'bg-emerald-50 text-emerald-800 shadow-xs border border-emerald-200' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> Provenance Watermark
+              </button>
+              <button
+                onClick={() => setModalTab('campaign')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                  modalTab === 'campaign' ? 'bg-primary-50 text-primary-800 shadow-xs border border-primary-200' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-primary-600" /> Campaign Crops
+              </button>
+            </div>
+
+            {/* Modal Body (Scrollable) */}
+            <div className="p-5 space-y-4 overflow-y-auto flex-1">
+              {/* Image Preview Container */}
+              <div className="rounded-xl overflow-hidden border border-gray-200 aspect-video bg-gray-950 flex items-center justify-center relative">
+                {modalTab === 'original' && (
+                  <img 
+                    src={assetTransformations?.optimized_url || activeEvidenceModal.cloudinary_url} 
+                    alt="Original Delivery" 
+                    onError={(e) => {
+                      if (activeEvidenceModal.cloudinary_url && e.currentTarget.src !== activeEvidenceModal.cloudinary_url) {
+                        e.currentTarget.src = activeEvidenceModal.cloudinary_url;
+                      }
+                    }}
+                    className="max-h-72 w-full object-contain" 
+                  />
+                )}
+
+                {modalTab === 'provenance' && (
+                  <img 
+                    src={assetTransformations?.verified_badge_url || activeEvidenceModal.cloudinary_url} 
+                    alt="Provenance Watermarked" 
+                    onError={(e) => {
+                      if (activeEvidenceModal.cloudinary_url && e.currentTarget.src !== activeEvidenceModal.cloudinary_url) {
+                        e.currentTarget.src = activeEvidenceModal.cloudinary_url;
+                      }
+                    }}
+                    className="max-h-72 w-full object-contain" 
+                  />
+                )}
+
+                {modalTab === 'campaign' && (
+                  <div className="grid grid-cols-3 gap-2 p-2 w-full h-full items-center bg-gray-900">
+                    <div className="space-y-1 text-center">
+                      <div className="aspect-square bg-black rounded border border-gray-700 overflow-hidden">
+                        <img 
+                          src={assetTransformations?.campaign_aspects?.square_1_1 || activeEvidenceModal.cloudinary_url} 
+                          alt="Square 1:1"
+                          onError={(e) => {
+                            if (activeEvidenceModal.cloudinary_url && e.currentTarget.src !== activeEvidenceModal.cloudinary_url) {
+                              e.currentTarget.src = activeEvidenceModal.cloudinary_url;
+                            }
+                          }}
+                          className="w-full h-full object-cover" 
+                        />
+                      </div>
+                      <span className="text-[10px] text-gray-300 font-mono">1:1 Square</span>
+                    </div>
+                    <div className="space-y-1 text-center">
+                      <div className="aspect-video bg-black rounded border border-gray-700 overflow-hidden">
+                        <img 
+                          src={assetTransformations?.campaign_aspects?.landscape_16_9 || activeEvidenceModal.cloudinary_url} 
+                          alt="Landscape 16:9"
+                          onError={(e) => {
+                            if (activeEvidenceModal.cloudinary_url && e.currentTarget.src !== activeEvidenceModal.cloudinary_url) {
+                              e.currentTarget.src = activeEvidenceModal.cloudinary_url;
+                            }
+                          }}
+                          className="w-full h-full object-cover" 
+                        />
+                      </div>
+                      <span className="text-[10px] text-gray-300 font-mono">16:9 Landscape</span>
+                    </div>
+                    <div className="space-y-1 text-center">
+                      <div className="aspect-[9/16] max-h-48 mx-auto bg-black rounded border border-gray-700 overflow-hidden">
+                        <img 
+                          src={assetTransformations?.campaign_aspects?.story_9_16 || activeEvidenceModal.cloudinary_url} 
+                          alt="Story 9:16"
+                          onError={(e) => {
+                            if (activeEvidenceModal.cloudinary_url && e.currentTarget.src !== activeEvidenceModal.cloudinary_url) {
+                              e.currentTarget.src = activeEvidenceModal.cloudinary_url;
+                            }
+                          }}
+                          className="w-full h-full object-cover" 
+                        />
+                      </div>
+                      <span className="text-[10px] text-gray-300 font-mono">9:16 Story</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Cloudinary Transformation Explanation Note */}
+              <div className="p-3 rounded-lg bg-gray-50 border border-gray-200 text-xs space-y-1.5">
+                {modalTab === 'original' && (
+                  <p className="text-gray-600">
+                    Delivered with <span className="font-mono text-primary-700 font-semibold">f_auto,q_auto</span> for optimal web bandwidth and instantaneous delivery caching.
+                  </p>
+                )}
+                {modalTab === 'provenance' && (
+                  <p className="text-gray-600">
+                    Dynamically burns verification badge, GPS stamp, and timestamp via Cloudinary text overlays (<span className="font-mono text-emerald-700 font-semibold">l_text:...</span>) without altering the immutable raw asset.
+                  </p>
+                )}
+                {modalTab === 'campaign' && (
+                  <p className="text-gray-600">
+                    Smart-cropped multi-aspect social exports generated on demand via AI focal points (<span className="font-mono text-primary-700 font-semibold">c_fill,g_auto</span>).
+                  </p>
+                )}
+              </div>
+
+              {/* Observation Details */}
               {activeEvidenceModal.activity && (
                 <div>
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Activity</span>
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Observed Activity</span>
                   <p className="text-xs font-semibold text-gray-900">{activeEvidenceModal.activity}</p>
                 </div>
               )}
               {activeEvidenceModal.description && (
                 <div>
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Observation Description</span>
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Moondream AI Grounded Description</span>
                   <p className="text-xs text-gray-700 bg-gray-50 p-2.5 rounded-lg border border-gray-100">{activeEvidenceModal.description}</p>
                 </div>
               )}
             </div>
 
-            <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
-              {activeEvidenceModal.cloudinary_url && (
+            {/* Modal Footer */}
+            <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-between items-center flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    let urlToCopy = activeEvidenceModal.cloudinary_url;
+                    if (modalTab === 'provenance' && assetTransformations?.verified_badge_url) {
+                      urlToCopy = assetTransformations.verified_badge_url;
+                    } else if (modalTab === 'campaign' && assetTransformations?.campaign_aspects?.square_1_1) {
+                      urlToCopy = assetTransformations.campaign_aspects.square_1_1;
+                    } else if (assetTransformations?.optimized_url) {
+                      urlToCopy = assetTransformations.optimized_url;
+                    }
+                    if (urlToCopy) {
+                      navigator.clipboard.writeText(urlToCopy);
+                      setCopiedUrl('modal');
+                      setTimeout(() => setCopiedUrl(null), 2000);
+                    }
+                  }}
+                  className="btn-secondary text-xs flex items-center gap-1.5 py-1 px-3"
+                >
+                  {copiedUrl === 'modal' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedUrl === 'modal' ? 'Copied URL!' : 'Copy Transformation URL'}
+                </button>
                 <a 
-                  href={activeEvidenceModal.cloudinary_url} 
+                  href={
+                    modalTab === 'provenance'
+                      ? (assetTransformations?.verified_badge_url || activeEvidenceModal.cloudinary_url)
+                      : modalTab === 'campaign'
+                      ? (assetTransformations?.campaign_aspects?.square_1_1 || activeEvidenceModal.cloudinary_url)
+                      : (assetTransformations?.optimized_url || activeEvidenceModal.cloudinary_url)
+                  } 
                   target="_blank" 
                   rel="noopener noreferrer" 
                   className="btn-secondary text-xs flex items-center gap-1 py-1 px-3"
                 >
-                  <ExternalLink className="w-3.5 h-3.5" /> Original HD
+                  <ExternalLink className="w-3.5 h-3.5" /> Open HD
                 </a>
-              )}
+              </div>
               <button 
+                type="button"
                 onClick={() => setActiveEvidenceModal(null)} 
                 className="btn-primary text-xs py-1 px-4"
               >
