@@ -49,3 +49,27 @@ export interface MediaDetail extends MediaAsset {
   evidence: VisualEvidence | null;
 }
 
+export interface SearchResultItem {
+  asset_id: string;
+  project_id?: string | null;
+  project_name?: string | null;
+  cloudinary_url: string;
+  description: string;
+  activity?: string | null;
+  scene?: string | null;
+  objects?: string[] | null;
+  project_signals?: string[] | null;
+  timestamp?: string | null;
+  location?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  score: number;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: SearchResultItem[];
+  count: number;
+}
+
+

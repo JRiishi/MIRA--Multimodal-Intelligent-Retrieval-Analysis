@@ -109,21 +109,44 @@ def background_process_media(
         
         # 5. Embedding & Qdrant Store (for ASSIGNED and NEEDS_REVIEW — makes both searchable)
         if routing_res.status in (RoutingStatus.ASSIGNED, RoutingStatus.NEEDS_REVIEW):
+            from app.services.search_service import build_searchable_document
+
             embed_service = EmbeddingService.get_instance()
             qdrant_service = QdrantService.get_instance()
             
-            text_to_embed = f"Description: {evidence.description}. Activity: {evidence.activity}. Objects: {evidence.objects}. Scene: {evidence.scene}"
+            # Fetch assigned project name if available
+            assigned_project = None
+            if evidence.project_id:
+                assigned_project = db.query(ProjectDB).filter(ProjectDB.id == evidence.project_id).first()
+            
+            project_name = assigned_project.name if assigned_project else None
+            location_name = assigned_project.location_name if assigned_project else None
+
+            text_to_embed = build_searchable_document(
+                project_name=project_name,
+                activity=evidence.activity,
+                scene=evidence.scene,
+                objects=md_output.get("objects", []),
+                description=evidence.description,
+                project_signals=md_output.get("project_signals", []),
+                location_name=location_name
+            )
+            
             vector = embed_service.get_embedding(text_to_embed)
             
             payload = {
                 "asset_id": evidence.asset_id,
+                "evidence_id": evidence.id,
                 "project_id": evidence.project_id,
+                "project_name": project_name,
                 "description": evidence.description,
                 "activity": evidence.activity,
-                "objects": evidence.objects,
                 "scene": evidence.scene,
-                "timestamp": evidence.timestamp,
-                "location": evidence.location,
+                "objects": md_output.get("objects", []),
+                "project_signals": md_output.get("project_signals", []),
+                "timestamp": evidence.created_at.isoformat() if evidence.created_at else None,
+                "location": location_name,
+                "location_name": location_name,
                 "latitude": evidence.latitude,
                 "longitude": evidence.longitude,
                 "location_source": evidence.location_source,
@@ -133,8 +156,9 @@ def background_process_media(
                 "routing_confidence": routing_res.confidence,
             }
             
-            qdrant_service.store_evidence(vector, payload, evidence.id)
-            print(f"[PIPELINE] Indexed into Qdrant: evidence_id={evidence.id}")
+            # Idempotent storage: Use asset_id as point_id
+            qdrant_service.store_evidence(vector, payload, point_id=evidence.asset_id)
+            print(f"[PIPELINE] Indexed into Qdrant: asset_id={evidence.asset_id} | project='{project_name}'")
         
         # Final status — only ASSIGNED becomes READY; NEEDS_REVIEW stays as-is
         if routing_res.status == RoutingStatus.ASSIGNED:
@@ -247,4 +271,13 @@ def delete_media(asset_id: str, db: Session = Depends(get_db)):
         
     db.delete(asset)
     db.commit()
+
+    # Delete point from Qdrant vector index
+    try:
+        qdrant_service = QdrantService.get_instance()
+        qdrant_service.delete_evidence(asset_id)
+    except Exception as e:
+        print(f"[MEDIA] Notice: Could not delete Qdrant vector for asset {asset_id}: {e}")
+
     return {"message": "Deleted successfully"}
+

@@ -33,24 +33,81 @@ class QdrantService:
             )
             
     def store_evidence(self, vector: list, payload: dict, point_id: str = None):
+        """
+        Store or update an evidence vector with metadata payload.
+        Idempotent: Uses deterministic UUID from point_id to update existing points in-place.
+        """
         if not point_id:
-            point_id = str(uuid.uuid4())
+            point_uuid = str(uuid.uuid4())
+        else:
+            try:
+                point_uuid = str(uuid.UUID(str(point_id)))
+            except Exception:
+                point_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(point_id)))
+
         self.client.upsert(
             collection_name=self.collection_name,
-            points=[PointStruct(id=point_id, vector=vector, payload=payload)]
+            points=[PointStruct(id=point_uuid, vector=vector, payload=payload)]
         )
+        print(f"[QDRANT] Stored point {point_uuid} (original: {point_id}) in {self.collection_name}")
+
         
-    def search_evidence(self, vector: list, limit=5, project_id=None):
-        query_filter = None
+    def search_evidence(
+        self, 
+        vector: list, 
+        limit: int = 10, 
+        project_id: str = None,
+        activity: str = None,
+        location: str = None
+    ):
+        must_conditions = []
         if project_id:
-            query_filter = Filter(
-                must=[FieldCondition(key="project_id", match=MatchValue(value=project_id))]
-            )
+            must_conditions.append(FieldCondition(key="project_id", match=MatchValue(value=project_id)))
+        if activity:
+            must_conditions.append(FieldCondition(key="activity", match=MatchValue(value=activity)))
+        if location:
+            # Match either location or location_name
+            must_conditions.append(FieldCondition(key="location_name", match=MatchValue(value=location)))
             
-        results = self.client.search(
-            collection_name=self.collection_name,
-            query_vector=vector,
-            query_filter=query_filter,
-            limit=limit
-        )
-        return results
+        query_filter = Filter(must=must_conditions) if must_conditions else None
+
+        
+        if hasattr(self.client, "query_points"):
+            res = self.client.query_points(
+                collection_name=self.collection_name,
+                query=vector,
+                query_filter=query_filter,
+                limit=limit
+            )
+            return res.points
+        else:
+            return self.client.search(
+                collection_name=self.collection_name,
+                query_vector=vector,
+                query_filter=query_filter,
+                limit=limit
+            )
+
+    def delete_evidence(self, point_id: str):
+        """
+        Delete an evidence point from Qdrant by point_id / asset_id.
+        """
+        if not point_id:
+            return
+        try:
+            try:
+                point_uuid = str(uuid.UUID(str(point_id)))
+            except Exception:
+                point_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(point_id)))
+            
+            # Use points selector to delete point
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=[point_uuid]
+            )
+            print(f"[QDRANT] Deleted point {point_uuid} (original: {point_id})")
+        except Exception as e:
+            print(f"[QDRANT] Warning: Failed to delete point {point_id}: {e}")
+
+
+

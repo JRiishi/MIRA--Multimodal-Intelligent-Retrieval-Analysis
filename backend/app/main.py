@@ -30,6 +30,20 @@ app.include_router(chat.router)
 app.include_router(change.router)
 app.include_router(reports.router)
 
+@app.on_event("startup")
+def on_startup():
+    from app.database import SessionLocal
+    from app.services.search_service import SearchService
+    db = SessionLocal()
+    try:
+        search_service = SearchService.get_instance()
+        search_service.sync_all_from_db(db)
+    except Exception as e:
+        print(f"[STARTUP] Notice: Qdrant sync deferred: {e}")
+    finally:
+        db.close()
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the Impact & Sustainability Media Platform API"}
+
