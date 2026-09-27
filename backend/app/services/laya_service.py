@@ -23,7 +23,9 @@ class LayaService:
         self,
         asset_id: str,
         evidence_data: dict,
-        candidate_projects: list
+        candidate_projects: list,
+        distance_map: Optional[Dict[str, float]] = None,
+        location_used: bool = False
     ) -> ProjectRoutingResult:
         """
         Route image evidence to a project using the non-autoregressive Laya decision model.
@@ -36,7 +38,9 @@ class LayaService:
                 selected_project_id=None,
                 confidence=0.0,
                 reason="No projects exist in the system.",
-                status=RoutingStatus.UNASSIGNED
+                status=RoutingStatus.UNASSIGNED,
+                distance_km=None,
+                location_used=location_used
             )
 
         # 1. Build input text from the visual description and visible context
@@ -58,7 +62,7 @@ class LayaService:
         input_text = " ".join(parts) if parts else "Field evidence image."
         print(f"[LAYA] Routing input text: {input_text}")
 
-        # 2. Build candidate project criteria with semantic slugs
+        # 2. Build candidate project criteria with semantic slugs & distance info
         proj_map: Dict[str, any] = {}
         criteria: Dict[str, str] = {}
 
@@ -83,17 +87,27 @@ class LayaService:
                     except Exception:
                         tags_clean = p.tags
 
-            criteria_text = f"{p.name}: {desc_clean}"
+            loc_details = []
+            if p.location_name:
+                loc_details.append(p.location_name)
+            if distance_map and p.id in distance_map:
+                loc_details.append(f"~{distance_map[p.id]:.1f}km away")
+
+            loc_str = f" ({', '.join(loc_details)})" if loc_details else ""
+            criteria_text = f"{p.name}{loc_str}: {desc_clean}"
             if tags_clean:
                 criteria_text += f". Keywords: {tags_clean}"
             criteria[slug] = criteria_text
 
-        print(f"[LAYA] Candidate criteria options: {list(criteria.keys())}")
+        # Add an 'unrelated_other' criteria option so Laya can distinguish non-matching content at the location
+        criteria["unrelated_other"] = "Unrelated field activity, household object, or completely irrelevant scene not matching any listed project."
+
+        print(f"[LAYA] Candidate criteria options ({len(criteria)}): {list(criteria.keys())}")
 
         questions = {
             "assigned_project": {
                 "type": "choice",
-                "instructions": "Which active project does this visual evidence belong to?",
+                "instructions": "Which active project at this location does this visual evidence belong to?",
                 "criteria": criteria
             }
         }
@@ -109,20 +123,40 @@ class LayaService:
         print(f"[LAYA] All probabilities: {probs}")
 
         # 4. Map choice and confidence to RoutingStatus
-        # Equal probability across 5 projects is 0.20
-        # >= 0.40: High confidence -> ASSIGNED
-        # 0.28 - 0.40: Moderate confidence -> NEEDS_REVIEW
-        # < 0.28: Low confidence / unrelated -> UNASSIGNED
+        # If Laya selected 'unrelated_other', mark UNASSIGNED
+        if choice == "unrelated_other":
+            print(f"[LAYA] -> UNASSIGNED (Laya determined visual content is unrelated to local project criteria)")
+            return ProjectRoutingResult(
+                asset_id=asset_id,
+                selected_project_id=None,
+                confidence=round(confidence, 4),
+                reason=f"Visual content does not match any active project at this location.",
+                status=RoutingStatus.UNASSIGNED,
+                distance_km=None,
+                location_used=location_used
+            )
+
         if choice in proj_map:
             selected_proj = proj_map[choice]
+            dist_km = distance_map.get(selected_proj.id) if distance_map else None
+
+            if location_used and dist_km is not None:
+                assign_reason = f"Image is {dist_km:.2f} km from {selected_proj.name} and visual context matches with {confidence:.1%} confidence."
+                review_reason = f"Image is {dist_km:.2f} km from {selected_proj.name}, moderate semantic match ({confidence:.1%}). Review required."
+            else:
+                assign_reason = f"Laya decision model chose '{selected_proj.name}' with {confidence:.1%} confidence."
+                review_reason = f"Laya moderate confidence match ({confidence:.1%}) with '{selected_proj.name}'. Manual review suggested."
+
             if confidence >= 0.40:
                 print(f"[LAYA] -> ASSIGNED to '{selected_proj.name}' ({confidence:.4f})")
                 return ProjectRoutingResult(
                     asset_id=asset_id,
                     selected_project_id=selected_proj.id,
                     confidence=round(confidence, 4),
-                    reason=f"Laya decision model chose '{selected_proj.name}' with {confidence:.1%} confidence",
-                    status=RoutingStatus.ASSIGNED
+                    reason=assign_reason,
+                    status=RoutingStatus.ASSIGNED,
+                    distance_km=dist_km,
+                    location_used=location_used
                 )
             elif confidence >= 0.28:
                 print(f"[LAYA] -> NEEDS_REVIEW for '{selected_proj.name}' ({confidence:.4f})")
@@ -130,8 +164,10 @@ class LayaService:
                     asset_id=asset_id,
                     selected_project_id=selected_proj.id,
                     confidence=round(confidence, 4),
-                    reason=f"Laya moderate confidence match ({confidence:.1%}) with '{selected_proj.name}'. Manual review suggested.",
-                    status=RoutingStatus.NEEDS_REVIEW
+                    reason=review_reason,
+                    status=RoutingStatus.NEEDS_REVIEW,
+                    distance_km=dist_km,
+                    location_used=location_used
                 )
         
         print(f"[LAYA] -> UNASSIGNED (confidence {confidence:.4f} below threshold or invalid choice)")
@@ -139,6 +175,8 @@ class LayaService:
             asset_id=asset_id,
             selected_project_id=None,
             confidence=round(confidence, 4),
-            reason=f"Confidence ({confidence:.1%}) below threshold or does not clearly match any project.",
-            status=RoutingStatus.UNASSIGNED
+            reason=f"Confidence ({confidence:.1%}) below threshold or does not clearly match any candidate project.",
+            status=RoutingStatus.UNASSIGNED,
+            distance_km=None,
+            location_used=location_used
         )

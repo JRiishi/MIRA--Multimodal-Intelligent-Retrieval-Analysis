@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Text
+from sqlalchemy import Column, String, DateTime, Text, Float
 from datetime import datetime
 import uuid
 from app.database import Base
@@ -10,4 +10,8 @@ class ProjectDB(Base):
     name = Column(String, index=True)
     description = Column(Text, nullable=True)
     tags = Column(Text, default="[]") # Stored as JSON string for SQLite simplicity
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    location_name = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+

@@ -9,6 +9,10 @@ class VisualEvidenceBase(BaseModel):
     scene: str
     objects: List[str]
     location: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    location_source: Optional[str] = None
+    location_match_distance: Optional[float] = None
     timestamp: Optional[str] = None
     routing_confidence: Optional[float] = None
     cloudinary_url: str
@@ -20,7 +24,7 @@ class VisualEvidence(VisualEvidenceBase):
     id: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class MoondreamOutput(BaseModel):
     description: str

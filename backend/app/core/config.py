@@ -14,5 +14,6 @@ class Settings:
     QDRANT_API_KEY: str = os.getenv("QDRANT_API_KEY", "")
     
     DATABASE_URL: str = "sqlite:///./cc_hack.db"
+    PROJECT_ROUTING_RADIUS_KM: float = float(os.getenv("PROJECT_ROUTING_RADIUS_KM", "15.0"))
 
 settings = Settings()

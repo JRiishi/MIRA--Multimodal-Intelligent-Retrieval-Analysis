@@ -1,4 +1,3 @@
-import React from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { LayoutDashboard, Folder, Image as ImageIcon, Search, AlertCircle, FileBarChart2 } from 'lucide-react';
 import { clsx } from 'clsx';

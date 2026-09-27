@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 from app.api import projects, media, search, chat, change, reports
-from app.database import engine, Base
+from app.database import engine, Base, ensure_schema_updated
 
 # Create the SQLite tables immediately
 Base.metadata.create_all(bind=engine)
+ensure_schema_updated()
 
 from fastapi.middleware.cors import CORSMiddleware
 

@@ -13,11 +13,15 @@ class ProcessingStatus(str, Enum):
     NEEDS_REVIEW = "NEEDS_REVIEW"
 
 class MediaAssetBase(BaseModel):
-    cloudinary_public_id: str
-    cloudinary_url: str
+    cloudinary_public_id: Optional[str] = None
+    cloudinary_url: Optional[str] = None
     project_id: Optional[str] = None
     captured_at: Optional[datetime] = None
     location: Optional[str] = None
+    image_latitude: Optional[float] = None
+    image_longitude: Optional[float] = None
+    location_source: Optional[str] = "NONE"
+    location_match_distance: Optional[float] = None
     mime_type: Optional[str] = None
 
 class MediaAssetCreate(MediaAssetBase):
@@ -29,4 +33,4 @@ class MediaAsset(MediaAssetBase):
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
-        orm_mode = True
+        from_attributes = True

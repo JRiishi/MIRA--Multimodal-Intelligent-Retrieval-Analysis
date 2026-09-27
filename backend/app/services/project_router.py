@@ -85,12 +85,16 @@ class ProjectRouter:
         asset_id: str,
         evidence_data: dict,
         candidate_projects: list,
+        image_lat: Optional[float] = None,
+        image_lon: Optional[float] = None,
+        location_source: str = "NONE",
         embed_service=None
     ) -> ProjectRoutingResult:
         """
         Route a media asset to the best matching project.
-        Uses Laya non-autoregressive decision model when USE_LAYA is True,
-        with seamless fallback to Sentence-Transformers cosine similarity.
+        1. If image GPS is present, filters candidate projects within PROJECT_ROUTING_RADIUS_KM.
+        2. Laya System 1 decision model evaluates visual evidence over the filtered candidates.
+        3. Seamless fallback to Sentence-Transformers cosine similarity if USE_LAYA is False.
         """
         if not candidate_projects:
             print(f"[ROUTER] No candidate projects available. Returning UNASSIGNED.")
@@ -99,18 +103,77 @@ class ProjectRouter:
                 selected_project_id=None,
                 confidence=0.0,
                 reason="No projects exist in the system.",
-                status=RoutingStatus.UNASSIGNED
+                status=RoutingStatus.UNASSIGNED,
+                distance_km=None,
+                location_used=False
             )
 
+        # 1. Geographic Candidate Filtering
+        from app.services.location_service import LocationService
+        from app.core.config import settings
+
+        location_used = False
+        distance_map = {}
+        filtered_candidates = candidate_projects
+
+        if LocationService.validate_coordinates(image_lat, image_lon):
+            location_used = True
+            print(f"[ROUTER] IMAGE GPS: lat={image_lat}, lon={image_lon} (source: {location_source})")
+            print(f"[ROUTER] Filtering candidate projects within {settings.PROJECT_ROUTING_RADIUS_KM} km of image location:")
+
+            geo_candidates = []
+            for p in candidate_projects:
+                if LocationService.validate_coordinates(p.latitude, p.longitude):
+                    dist = LocationService.calculate_distance(image_lat, image_lon, p.latitude, p.longitude)
+                    distance_map[p.id] = dist
+                    if dist <= settings.PROJECT_ROUTING_RADIUS_KM:
+                        print(f"[ROUTER]   -> '{p.name}': {dist:.2f} km (INCLUDED)")
+                        geo_candidates.append(p)
+                    else:
+                        print(f"[ROUTER]   -> '{p.name}': {dist:.2f} km (EXCLUDED: > {settings.PROJECT_ROUTING_RADIUS_KM}km)")
+                else:
+                    print(f"[ROUTER]   -> '{p.name}': No coordinates defined (EXCLUDED from geo-filtered set)")
+
+            if not geo_candidates:
+                print(f"[ROUTER] No projects found within {settings.PROJECT_ROUTING_RADIUS_KM} km of ({image_lat}, {image_lon}). Marking UNASSIGNED.")
+                return ProjectRoutingResult(
+                    asset_id=asset_id,
+                    selected_project_id=None,
+                    confidence=0.0,
+                    reason=f"No projects found within {settings.PROJECT_ROUTING_RADIUS_KM}km radius of image location ({image_lat}, {image_lon}).",
+                    status=RoutingStatus.UNASSIGNED,
+                    distance_km=None,
+                    location_used=True
+                )
+
+            print(f"[ROUTER] Geolocation filter reduced candidates from {len(candidate_projects)} to {len(geo_candidates)} project(s).")
+            filtered_candidates = geo_candidates
+        else:
+            print("[ROUTER] No image GPS available. Passing all project candidates to router.")
+
+        # 2. Decision Routing (Laya or Embeddings)
         if cls.USE_LAYA:
             try:
                 from app.services.laya_service import LayaService
                 laya_service = LayaService.get_instance()
-                return laya_service.route_evidence(asset_id, evidence_data, candidate_projects)
+                return laya_service.route_evidence(
+                    asset_id=asset_id,
+                    evidence_data=evidence_data,
+                    candidate_projects=filtered_candidates,
+                    distance_map=distance_map,
+                    location_used=location_used
+                )
             except Exception as e:
                 print(f"[ROUTER] Laya decision routing failed: {e}. Falling back to embedding router.")
 
-        return cls.route_evidence_embeddings(asset_id, evidence_data, candidate_projects, embed_service)
+        return cls.route_evidence_embeddings(
+            asset_id=asset_id,
+            evidence_data=evidence_data,
+            candidate_projects=filtered_candidates,
+            distance_map=distance_map,
+            location_used=location_used,
+            embed_service=embed_service
+        )
 
     @classmethod
     def route_evidence_embeddings(
@@ -118,6 +181,8 @@ class ProjectRouter:
         asset_id: str,
         evidence_data: dict,
         candidate_projects: list,
+        distance_map: Optional[dict] = None,
+        location_used: bool = False,
         embed_service=None
     ) -> ProjectRoutingResult:
 
@@ -152,7 +217,8 @@ class ProjectRouter:
                 score = float(np.dot(ev, pv) / (norm_ev * norm_pv))
 
             scores[project.name] = round(score, 4)
-            print(f"[ROUTER]   '{project.name}' → score={score:.4f} | text: {proj_text[:80]}")
+            dist_str = f" (~{distance_map[project.id]:.1f}km)" if (distance_map and project.id in distance_map) else ""
+            print(f"[ROUTER]   '{project.name}'{dist_str} → score={score:.4f}")
 
             if score > best_score:
                 best_score = score
@@ -160,25 +226,32 @@ class ProjectRouter:
 
         print(f"[ROUTER] All scores: {scores}")
         print(f"[ROUTER] Best: '{best_project.name if best_project else None}' @ {best_score:.4f}")
-        print(f"[ROUTER] Thresholds: ASSIGN={ProjectRouter.ASSIGN_THRESHOLD}, REVIEW={ProjectRouter.REVIEW_THRESHOLD}")
+
+        dist_km = distance_map.get(best_project.id) if (best_project and distance_map) else None
 
         if best_project and best_score >= ProjectRouter.ASSIGN_THRESHOLD:
             print(f"[ROUTER] → ASSIGNED to '{best_project.name}'")
+            reason = f"Image is {dist_km:.2f}km from {best_project.name} and visual similarity ({best_score:.4f}) matches." if (location_used and dist_km is not None) else f"Semantic similarity {best_score:.4f} >= {ProjectRouter.ASSIGN_THRESHOLD} with '{best_project.name}'"
             return ProjectRoutingResult(
                 asset_id=asset_id,
                 selected_project_id=best_project.id,
                 confidence=round(best_score, 4),
-                reason=f"Semantic similarity {best_score:.4f} >= {ProjectRouter.ASSIGN_THRESHOLD} with '{best_project.name}'",
-                status=RoutingStatus.ASSIGNED
+                reason=reason,
+                status=RoutingStatus.ASSIGNED,
+                distance_km=dist_km,
+                location_used=location_used
             )
         elif best_project and best_score >= ProjectRouter.REVIEW_THRESHOLD:
             print(f"[ROUTER] → NEEDS_REVIEW (score {best_score:.4f} in review band)")
+            reason = f"Image is {dist_km:.2f}km from {best_project.name}, moderate similarity ({best_score:.4f}). Review required." if (location_used and dist_km is not None) else f"Low confidence match ({best_score:.4f}) with '{best_project.name}'. Manual review required."
             return ProjectRoutingResult(
                 asset_id=asset_id,
                 selected_project_id=best_project.id,
                 confidence=round(best_score, 4),
-                reason=f"Low confidence match ({best_score:.4f}) with '{best_project.name}'. Manual review required.",
-                status=RoutingStatus.NEEDS_REVIEW
+                reason=reason,
+                status=RoutingStatus.NEEDS_REVIEW,
+                distance_km=dist_km,
+                location_used=location_used
             )
         else:
             print(f"[ROUTER] → UNASSIGNED (score {best_score:.4f} below review threshold)")
@@ -187,5 +260,7 @@ class ProjectRouter:
                 selected_project_id=None,
                 confidence=round(best_score, 4),
                 reason=f"Best similarity ({best_score:.4f}) is below minimum review threshold.",
-                status=RoutingStatus.UNASSIGNED
+                status=RoutingStatus.UNASSIGNED,
+                distance_km=None,
+                location_used=location_used
             )

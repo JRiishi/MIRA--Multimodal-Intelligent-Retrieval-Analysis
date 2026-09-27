@@ -14,3 +14,5 @@ pillow>=10.0.0
 laya>=0.3.20
 requests>=2.31.0
 numpy>=1.24.0
+piexif>=1.1.3
+

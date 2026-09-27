@@ -13,3 +13,5 @@ class ProjectRoutingResult(BaseModel):
     confidence: float
     reason: str
     status: RoutingStatus
+    distance_km: Optional[float] = None
+    location_used: bool = False

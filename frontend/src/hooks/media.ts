@@ -42,9 +42,19 @@ export function useUploadMedia() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async (input: File | { file: File; latitude?: number | null; longitude?: number | null }) => {
       const formData = new FormData();
-      formData.append('file', file);
+      if (input instanceof File) {
+        formData.append('file', input);
+      } else {
+        formData.append('file', input.file);
+        if (input.latitude != null && !isNaN(input.latitude)) {
+          formData.append('latitude', input.latitude.toString());
+        }
+        if (input.longitude != null && !isNaN(input.longitude)) {
+          formData.append('longitude', input.longitude.toString());
+        }
+      }
       
       const { data } = await api.post<{asset_id: string, status: string}>('/media/process', formData, {
         headers: {

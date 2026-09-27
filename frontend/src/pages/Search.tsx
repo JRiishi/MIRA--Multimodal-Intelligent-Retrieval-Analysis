@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSearch } from '../hooks/search';
-import { Search as SearchIcon, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { Search as SearchIcon, Loader2 } from 'lucide-react';
 import { useProjects } from '../hooks/projects';
 
 export default function Search() {

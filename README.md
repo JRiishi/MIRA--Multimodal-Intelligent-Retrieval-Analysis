@@ -10,11 +10,12 @@
 Field teams across sustainability, infrastructure, and renewable energy capture hundreds of photos and videos daily. Manually reviewing, tagging, organizing, and linking media to projects is slow, error-prone, and unscalable.
 
 This platform automates the entire lifecycle:
-1. **Field Ingestion**: Upload raw images from field sites.
-2. **Visual Intelligence (Moondream2)**: Extracts descriptions, activities, scenes, detected objects, and domain signals.
-3. **Automated Project Routing (Laya)**: Uses a fast, non-autoregressive System 1 decision engine to categorize media into projects in a single forward pass (~33ms) with zero hallucination.
-4. **Vector Search (Qdrant + Sentence-Transformers)**: Embeds visual intelligence into 384-dimensional vectors for natural language search.
-5. **Modern Dashboard**: High-performance React UI with live status polling, project workspaces, before/after comparisons, and media management.
+1. **Field Ingestion**: Upload raw images from field sites with automatic EXIF GPS extraction.
+2. **Geographic Radius Candidate Filter**: Uses Haversine distance calculations to narrow down candidate projects within radius (default 15 km) before decision routing.
+3. **Visual Intelligence (Moondream2)**: Extracts descriptions, activities, scenes, detected objects, and domain signals locally.
+4. **Automated Project Routing (Laya)**: Uses a fast, non-autoregressive System 1 decision engine to categorize media into geographically-filtered projects in a single forward pass (~33ms) with zero hallucination.
+5. **Vector Search (Qdrant + Sentence-Transformers)**: Embeds visual intelligence into 384-dimensional vectors for natural language search.
+6. **Modern Dashboard**: High-performance React UI with live status polling, project workspaces, geo-location badges, before/after comparisons, and media management.
 
 ---
 
@@ -24,16 +25,19 @@ This platform automates the entire lifecycle:
 graph TD
     A[Field Media Upload] -->|POST /media/process| B(FastAPI Server)
     B -->|Async Task| C[Cloudinary CDN]
-    B -->|Visual Analysis| D[Moondream2 VLM]
-    D -->|Extracted Signals| E[Laya Decision Engine]
-    E -->|Route & Score| F{Confidence Check}
-    F -->|>= 40%| G[ASSIGNED to Project]
-    F -->|28% - 40%| H[NEEDS_REVIEW]
-    F -->|< 28%| I[UNASSIGNED]
-    G & H -->|Generate Vector| J[all-MiniLM-L6-v2]
-    J -->|Upsert Point| K[(Qdrant Vector DB)]
-    B -->|Persist Metadata| L[(SQLite DB)]
-    L -->|Live Polling & UI| M[React + Vite Frontend]
+    B -->|Extract EXIF GPS| D[Location Service]
+    D -->|Haversine Filter (<= 15km)| E[Geo-Filtered Project Candidates]
+    B -->|Visual Analysis| F[Moondream2 VLM]
+    F -->|Extracted Visual Signals| G[Laya Decision Engine]
+    E -->|Filtered Project Criteria| G
+    G -->|Route & Score| H{Confidence Check}
+    H -->|>= 40%| I[ASSIGNED to Project]
+    H -->|28% - 40%| J[NEEDS_REVIEW]
+    H -->|< 28%| K[UNASSIGNED]
+    I & J -->|Generate Vector| L[all-MiniLM-L6-v2]
+    L -->|Upsert Point with GPS| M[(Qdrant Vector DB)]
+    B -->|Persist Metadata & Location| N[(SQLite DB)]
+    N -->|Live Polling & UI| O[React + Vite Frontend]
 ```
 
 ### 🧠 AI / ML Stack (100% Local Inference)

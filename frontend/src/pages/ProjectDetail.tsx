@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useProject } from '../hooks/projects';
+import { useProject, useDeleteProject } from '../hooks/projects';
 import { useMediaLibrary } from '../hooks/media';
-import { ArrowLeft, Calendar, FileText, Image as ImageIcon, MessageSquare, Clock, GitCompare } from 'lucide-react';
+import { ArrowLeft, Calendar, FileText, Image as ImageIcon, MessageSquare, Clock, GitCompare, MapPin, Trash2, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { clsx } from 'clsx';
 
@@ -19,10 +19,22 @@ export default function ProjectDetail() {
   const navigate = useNavigate();
   const { data: project, isLoading: isProjectLoading } = useProject(projectId);
   const { data: allMedia } = useMediaLibrary();
+  const deleteMutation = useDeleteProject();
   
   const [activeTab, setActiveTab] = useState('overview');
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   
   const projectMedia = allMedia?.filter(m => m.project_id === projectId) || [];
+
+  const handleDelete = () => {
+    if (!projectId) return;
+    deleteMutation.mutate(projectId, {
+      onSuccess: () => {
+        setIsDeleteModalOpen(false);
+        navigate('/projects');
+      },
+    });
+  };
 
   if (isProjectLoading) {
     return <div className="p-8 animate-pulse"><div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div></div>;
@@ -44,12 +56,35 @@ export default function ProjectDetail() {
         </button>
         <div className="flex justify-between items-start">
           <div>
-            <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">{project.name}</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">{project.name}</h1>
+              {project.location_name && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-primary-700 bg-primary-50 border border-primary-100 px-2.5 py-1 rounded-full">
+                  <MapPin className="w-3.5 h-3.5" />
+                  {project.location_name}
+                  {project.latitude != null && project.longitude != null && (
+                    <span className="text-primary-400 font-mono text-[11px]">
+                      ({project.latitude.toFixed(3)}, {project.longitude.toFixed(3)})
+                    </span>
+                  )}
+                </span>
+              )}
+            </div>
             <p className="text-sm text-gray-600 mt-2 max-w-2xl">{project.description || "No description provided."}</p>
           </div>
-          <div className="text-sm text-gray-500 flex items-center gap-1.5 bg-gray-50 px-3 py-1.5 rounded border border-gray-100">
-            <Calendar className="w-4 h-4" />
-            Created {format(new Date(project.created_at), 'MMM d, yyyy')}
+          <div className="flex items-center gap-3">
+            <div className="text-sm text-gray-500 flex items-center gap-1.5 bg-gray-50 px-3 py-1.5 rounded border border-gray-100">
+              <Calendar className="w-4 h-4" />
+              Created {format(new Date(project.created_at), 'MMM d, yyyy')}
+            </div>
+            <button
+              onClick={() => setIsDeleteModalOpen(true)}
+              className="btn-secondary text-red-600 hover:bg-red-50 hover:border-red-200 flex items-center gap-1.5 text-xs py-1.5 px-3"
+              title="Delete Project"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Project
+            </button>
           </div>
         </div>
         
@@ -126,6 +161,36 @@ export default function ProjectDetail() {
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900">Delete Project?</h3>
+            <p className="text-sm text-gray-600 mt-2">
+              Are you sure you want to delete <span className="font-medium text-gray-900">"{project.name}"</span>? Any associated media assets will become unassigned.
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="btn-secondary text-sm"
+                disabled={deleteMutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="bg-red-600 hover:bg-red-700 text-white font-medium px-4 py-2 rounded-md text-sm transition-colors flex items-center gap-2"
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Delete Project'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

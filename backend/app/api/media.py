@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db, SessionLocal
@@ -16,15 +16,36 @@ import io
 
 router = APIRouter(prefix="/media", tags=["media"])
 
-def background_process_media(asset_id: str, file_bytes: bytes, content_type: str):
+def background_process_media(
+    asset_id: str, 
+    file_bytes: bytes, 
+    content_type: str,
+    manual_lat: Optional[float] = None,
+    manual_lon: Optional[float] = None
+):
     db = SessionLocal()
     try:
         media_asset = db.query(MediaAssetDB).filter(MediaAssetDB.id == asset_id).first()
         if not media_asset:
             return
 
-        # 1. Cloudinary Upload
+        # 1. Cloudinary Upload & GPS Extraction (Manual or EXIF)
         media_asset.processing_status = "UPLOADING"
+        db.commit()
+
+        from app.services.location_service import LocationService
+        
+        # Prioritize explicitly provided GPS coordinates, fallback to EXIF
+        if LocationService.validate_coordinates(manual_lat, manual_lon):
+            image_lat = manual_lat
+            image_lon = manual_lon
+            location_source = "MANUAL"
+        else:
+            image_lat, image_lon, location_source = LocationService.extract_exif_gps(file_bytes)
+        
+        media_asset.image_latitude = image_lat
+        media_asset.image_longitude = image_lon
+        media_asset.location_source = location_source
         db.commit()
         
         cloud_result = CloudinaryService.upload_image(file_bytes)
@@ -46,13 +67,21 @@ def background_process_media(asset_id: str, file_bytes: bytes, content_type: str
         media_asset.processing_status = "ROUTING"
         db.commit()
         
-        # 3. Project Routing
+        # 3. Project Routing (Geographic filter + Laya / Embedding decision)
         candidate_projects = db.query(ProjectDB).all()
-        print(f"[PIPELINE] Routing against {len(candidate_projects)} projects")
-        routing_res = ProjectRouter.route_evidence(media_asset.id, md_output, candidate_projects)
+        print(f"[PIPELINE] Routing against {len(candidate_projects)} projects with GPS ({image_lat}, {image_lon})")
+        routing_res = ProjectRouter.route_evidence(
+            asset_id=media_asset.id,
+            evidence_data=md_output,
+            candidate_projects=candidate_projects,
+            image_lat=image_lat,
+            image_lon=image_lon,
+            location_source=location_source
+        )
         
         # Persist routing result to asset
         media_asset.project_id = routing_res.selected_project_id
+        media_asset.location_match_distance = routing_res.distance_km
         # Map routing status to processing status
         if routing_res.status == RoutingStatus.ASSIGNED:
             media_asset.processing_status = "INDEXING"
@@ -61,10 +90,19 @@ def background_process_media(asset_id: str, file_bytes: bytes, content_type: str
         else:
             media_asset.processing_status = "UNASSIGNED"
         db.commit()
-        print(f"[PIPELINE] Routing complete: status={routing_res.status}, project={routing_res.selected_project_id}, confidence={routing_res.confidence}")
+        print(f"[PIPELINE] Routing complete: status={routing_res.status}, project={routing_res.selected_project_id}, confidence={routing_res.confidence}, distance={routing_res.distance_km}km")
         
         # 4. Evidence Creation — always create, regardless of routing outcome
-        evidence = EvidenceService.build_evidence(media_asset.id, cloud_result["url"], md_output, routing_res)
+        evidence = EvidenceService.build_evidence(
+            asset_id=media_asset.id,
+            cloudinary_url=cloud_result["url"],
+            moondream_out=md_output,
+            routing_res=routing_res,
+            latitude=image_lat,
+            longitude=image_lon,
+            location_source=location_source,
+            location_match_distance=routing_res.distance_km
+        )
         db.add(evidence)
         db.commit()
         db.refresh(evidence)
@@ -86,6 +124,10 @@ def background_process_media(asset_id: str, file_bytes: bytes, content_type: str
                 "scene": evidence.scene,
                 "timestamp": evidence.timestamp,
                 "location": evidence.location,
+                "latitude": evidence.latitude,
+                "longitude": evidence.longitude,
+                "location_source": evidence.location_source,
+                "location_match_distance": evidence.location_match_distance,
                 "cloudinary_url": evidence.cloudinary_url,
                 "routing_status": routing_res.status.value,
                 "routing_confidence": routing_res.confidence,
@@ -114,7 +156,13 @@ def background_process_media(asset_id: str, file_bytes: bytes, content_type: str
 
 
 @router.post("/process")
-def process_media(background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db)):
+def process_media(
+    background_tasks: BackgroundTasks, 
+    file: UploadFile = File(...), 
+    latitude: Optional[float] = Form(None),
+    longitude: Optional[float] = Form(None),
+    db: Session = Depends(get_db)
+):
     try:
         file_bytes = file.file.read()
         
@@ -127,8 +175,15 @@ def process_media(background_tasks: BackgroundTasks, file: UploadFile = File(...
         db.commit()
         db.refresh(media_asset)
         
-        # Spawn Background Task
-        background_tasks.add_task(background_process_media, media_asset.id, file_bytes, file.content_type)
+        # Spawn Background Task with optional manual coordinates
+        background_tasks.add_task(
+            background_process_media, 
+            media_asset.id, 
+            file_bytes, 
+            file.content_type,
+            latitude,
+            longitude
+        )
         
         return {
             "asset_id": media_asset.id,
@@ -163,11 +218,19 @@ def get_media(asset_id: str, db: Session = Depends(get_db)):
         "processing_status": asset.processing_status,
         "uploaded_at": asset.uploaded_at,
         "mime_type": asset.mime_type,
+        "image_latitude": asset.image_latitude,
+        "image_longitude": asset.image_longitude,
+        "location_source": asset.location_source,
+        "location_match_distance": asset.location_match_distance,
         "evidence": {
             "description": evidence.description,
             "activity": evidence.activity,
             "scene": evidence.scene,
             "objects": evidence.objects,
+            "latitude": evidence.latitude,
+            "longitude": evidence.longitude,
+            "location_source": evidence.location_source,
+            "location_match_distance": evidence.location_match_distance,
             "routing_confidence": evidence.routing_confidence
         } if evidence else None
     }
