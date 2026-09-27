@@ -31,6 +31,10 @@ export interface MediaAsset {
   image_longitude?: number | null;
   location_source?: string | null;
   location_match_distance?: number | null;
+  description?: string | null;
+  activity?: string | null;
+  scene?: string | null;
+  routing_confidence?: number | null;
 }
 
 export interface VisualEvidence {

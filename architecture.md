@@ -1,129 +1,208 @@
 # MIRA — Multimodal Intelligent Retrieval & Analysis Architecture
-*Code Cubicle 6.0 — PS02: AI-Powered Field Media Intelligence Platform*
-
-This document provides a comprehensive, deep-dive architectural overview of the entire system, detailing the end-to-end media pipeline, backend services, frontend application structure, and data flows.
-
-## 1. System Overview & Core Technologies
-
-The platform is designed as an intelligent media routing and semantic search engine. When a user uploads field media (images from construction sites, nature reserves, public infrastructure, etc.), the AI automatically analyzes the visual context, routes it to the correct project workspace, extracts searchable semantic evidence, and makes it available via a lightning-fast React frontend.
-
-### Tech Stack
-*   **Frontend**: React 18, TypeScript, Vite, Tailwind CSS V4, TanStack React Query v5, Lucide Icons.
-*   **Backend**: Python, FastAPI, SQLAlchemy (SQLite), BackgroundTasks.
-*   **AI / ML**: HuggingFace `transformers` (v5.17.0), `vikhyatk/moondream2` (Vision-Language Model), `laya` (System 1 Non-Autoregressive Decision Engine), `sentence-transformers` (`all-MiniLM-L6-v2`).
-*   **Infrastructure / Data**: Cloudinary (Image Hosting), Qdrant (Vector Database).
+*Code Cubicle 6.0 — PS02: AI-Powered Field Media Intelligence Platform & Cloudinary Track*
 
 ---
 
-## 2. The Media Processing Pipeline (End-to-End)
+## 1. System Overview & Core Philosophy
 
-The core innovation of this platform is the **Asynchronous AI Media Pipeline**. 
+**MIRA** is an enterprise-grade field media intelligence and automated spatial-semantic routing platform. It solves the critical bottleneck faced by infrastructure, environmental, and renewable energy organizations: ingesting thousands of unorganized field photos and converting them into structured, searchable project intelligence.
 
-When a user uploads an image via the frontend `MediaLibrary`, the following automated sequence occurs:
-
-1.  **Frontend Dispatch (`POST /media/process`)**
-    *   The frontend uploads the file using `multipart/form-data`.
-    *   The backend immediately creates a pending `MediaAssetDB` record with a status of `QUEUED`.
-    *   FastAPI dispatches the heavy-lifting logic to a `fastapi.BackgroundTasks` worker thread.
-    *   The backend immediately returns `200 OK` with the `asset_id` so the frontend can begin polling.
-2.  **Asset Hosting (Cloudinary)**
-    *   Status shifts to `UPLOADING`.
-    *   The image binary is securely streamed to Cloudinary via `CloudinaryService.upload_image()`.
-    *   A permanent `cloudinary_url` is obtained and saved to the database.
-3.  **Vision-Language Analysis (Moondream2)**
-    *   Status shifts to `ANALYZING`.
-    *   The `MoondreamService` (running as an in-memory Singleton to prevent reloading the 1.5GB model on every request) encodes the image.
-    *   The VLM is prompted to extract a strict JSON structure containing: `description`, `activity`, `scene`, `objects`, and `project_signals`.
-4.  **Semantic Routing Engine (Laya Decision Engine)**
-    *   Status shifts to `ROUTING`.
-    *   The `ProjectRouter` delegates to `LayaService` using the `laya` non-autoregressive decision model (`convaiinnovations/laya` ModernBERT).
-    *   The model evaluates the visual description and visible context against all candidate project criteria in a single forward pass (~33ms), outputting calibrated probabilities without LLM hallucinations.
-    *   Categorization mapping: $\ge 40\%$ probability $\rightarrow$ `ASSIGNED`, $28\% - 40\%$ $\rightarrow$ `NEEDS_REVIEW`, $< 28\%$ $\rightarrow$ `UNASSIGNED`.
-    *   Seamless fallback to `sentence-transformers` embedding cosine similarity is available if toggled (`USE_LAYA = False`).
-5.  **Vector Indexing (Qdrant)**
-    *   Status shifts to `INDEXING`.
-    *   The `EvidenceService` builds a final comprehensive JSON object.
-    *   The `EmbeddingService` generates a 384-dimensional dense vector representing the visual evidence.
-    *   The vector and its metadata payload are pushed into the local Qdrant instance for immediate semantic search availability.
-6.  **Finalization**
-    *   Status shifts to `READY`.
-    *   The frontend polling hook catches the `READY` state, stops polling, and instantly renders the fully contextualized image with its newly assigned Project tag.
+### Key Innovations:
+1. **Cloudinary as the Intelligence Backbone**: Beyond cloud storage, Cloudinary serves as a queryable metadata layer and dynamic transformation engine (real-time provenance watermarks, dual-layer before/after composites, AI smart crops, and Boolean metadata search).
+2. **Dual-Stage System 1 Decision Routing**: Combines Haversine spatial radius filtering ($d \le 15\text{ km}$) with a non-autoregressive ModernBERT decision engine (`laya`) executing in $\sim 33\text{ms}$ per forward pass.
+3. **100% Offline / Local AI Engine**: Runs local Vision-Language Models (`moondream2`), dense embeddings (`all-MiniLM-L6-v2`), vector indexing (`Qdrant`), and local generative LLMs (`TinyLlama-1.1B-Chat`) without external paid APIs.
 
 ---
 
-## 3. Backend Architecture (FastAPI)
+## 2. End-to-End Media Processing Pipeline
 
-The backend is modularized to strictly separate API transport, database modeling, and heavy ML service execution.
-
-### Directory Structure
-```text
-backend/
-├── app/
-│   ├── api/                 # API Routers (media.py, projects.py, search.py)
-│   ├── models/              # SQLAlchemy ORM Models (media.py, project.py)
-│   ├── schemas/             # Pydantic validation schemas
-│   ├── services/            # Core Business & ML Logic
-│   │   ├── cloudinary_service.py
-│   │   ├── embedding_service.py # sentence-transformers (Singleton)
-│   │   ├── evidence_service.py
-│   │   ├── moondream_service.py # Vision Language Model (Singleton)
-│   │   ├── project_router.py    # Auto-routing logic
-│   │   └── qdrant_service.py    # Vector DB interface
-│   ├── database.py          # SQLite engine & SessionLocal
-│   └── main.py              # FastAPI application & CORS config
+```mermaid
+graph TD
+    A["Field Photo Capture"] -->|"Upload / Webhook"| B["FastAPI Ingestion Gateway"]
+    B -->|"Store & Extract EXIF"| C["Cloudinary CDN"]
+    B -->|"GPS Coordinates"| D["Location Service (Haversine Filter)"]
+    D -->|"Radius Filter (<= 15km)"| E["Candidate Project Criteria"]
+    B -->|"Visual Analysis"| F["Moondream2 VLM (1.86B)"]
+    F -->|"Description, Activity, Objects"| G["Laya Decision Engine (421M)"]
+    E -->|"Project Context"| G
+    G -->|"Route & Score"| H{"Confidence Check"}
+    H -->|"Confidence >= 40%"| I["ASSIGNED to Project"]
+    H -->|"Confidence 28% - 40%"| J["NEEDS_REVIEW Queue"]
+    H -->|"Confidence < 28%"| K["UNASSIGNED"]
+    I -->|"Metadata Sync explicit()"| C
+    I -->|"Dense 384-d Embedding"| L["MiniLM Embeddings"]
+    L -->|"Upsert Point with GPS"| M[("Qdrant Vector DB")]
+    I -->|"Persist Evidence & State"| N[("SQLite DB")]
+    N -->|"Grounded Context"| O["TinyLlama 1.1B Local LLM"]
+    O -->|"Project Q&A & Audit Reports"| P["React + Vite UI Dashboard"]
 ```
 
-### Key Design Decisions
-*   **Singleton ML Models**: Both `moondream_service` and `embedding_service` use a Singleton pattern (`_instance`). This ensures the massive PyTorch models are loaded onto the CPU/GPU exactly once when the server boots, reducing per-request latency from ~10 seconds to under 2 seconds.
-*   **Isolated Database Sessions**: Because background tasks run in separate threads from the primary HTTP requests, the `background_process_media` function manually instantiates its own `SessionLocal()`. This completely prevents `ObjectDeletedError` and SQLite thread-safety violations.
-*   **Graceful AI Failure**: If Moondream fails to output valid JSON, the backend utilizes regex fallback parsing, ensuring the pipeline doesn't crash on bad LLM formatting.
+### Detailed Pipeline Stages:
+
+1. **Ingestion & Geotagging**:
+   - Accepts media via `POST /media/process` or event-driven `POST /media/webhook`.
+   - Extracts EXIF metadata (GPS latitude/longitude, creation timestamps) or accepts manual override coordinates.
+2. **Spatial Candidate Pre-Filtering**:
+   - `LocationService` calculates Haversine great-circle distances between asset GPS and registered project location coordinates.
+   - Restricts routing candidates to projects within a 15 km geographic radius.
+3. **Local Vision-Language Analysis (`Moondream2`)**:
+   - Analyzes images via a GPU/CPU in-memory singleton.
+   - Produces structured JSON: `description`, `activity`, `scene`, `objects`, and `project_signals`.
+4. **Fast Non-Autoregressive Routing (`Laya`)**:
+   - Evaluates visual context against candidate project descriptions simultaneously.
+   - Assigns probability scores with calibrated certainty thresholds:
+     - $\ge 40\%$: Automatic assignment (`ASSIGNED`).
+     - $28\% - 40\%$: Human-in-the-loop review queue (`NEEDS_REVIEW`).
+     - $< 28\%$: Tagged as `UNASSIGNED`.
+5. **Cloudinary Metadata Synchronization (`explicit()`)**:
+   - Writes visual descriptions, activities, GPS coordinates, and routing scores back to Cloudinary asset `context` and `tags`.
+   - Ensures the CDN repository remains a self-describing, searchable intelligence archive.
+6. **Vector Embedding & Qdrant Indexing**:
+   - Constructs unified semantic documents and embeds them into 384-dimensional vectors using `all-MiniLM-L6-v2`.
+   - Indexes vectors into Qdrant alongside project IDs and GPS payloads for sub-millisecond retrieval.
 
 ---
 
-## 4. Frontend Architecture (React + Vite)
+## 3. Cloudinary Media Intelligence Layer
 
-The frontend acts as a pristine, highly-responsive state machine that reacts to the asynchronous AI pipeline.
-
-### Directory Structure
-```text
-frontend/
-├── src/
-│   ├── components/
-│   │   └── layout/          # AppLayout, Sidebar
-│   ├── hooks/               # TanStack React Query Hooks
-│   │   ├── media.ts         # Polling logic, mutations
-│   │   ├── projects.ts      # Fetching project workspaces
-│   │   └── search.ts        # Semantic search queries
-│   ├── pages/               # Route Components
-│   │   ├── Dashboard.tsx
-│   │   ├── MediaLibrary.tsx # Polling grid UI
-│   │   ├── ProjectDetail.tsx# Project-specific evidence
-│   │   ├── Projects.tsx     # Project creation & listing
-│   │   └── Search.tsx       # AI Semantic Search UI
-│   ├── services/
-│   │   └── api.ts           # Axios base client
-│   ├── types/               # Strict TypeScript interfaces
-│   ├── App.tsx              # React Router setup
-│   └── index.css            # Tailwind V4 core imports
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Cloudinary Architecture                  │
+├──────────────────────────────┬──────────────────────────────┤
+│ Computational Layer          │ Delivery & Transformation    │
+├──────────────────────────────┼──────────────────────────────┤
+│ • explicit() Metadata Sync   │ • Verified Badge (l_text)    │
+│ • Search API Boolean Queries │ • Split Composite Comparison │
+│ • Upload Presets & Webhooks  │ • Multi-Aspect Social Crops  │
+│ • Signed Ingestion (HMAC)    │ • f_auto, q_auto Adaptive    │
+└──────────────────────────────┴──────────────────────────────┘
 ```
 
-### Key Design Decisions
-*   **Intelligent UI Polling**: The `useMediaLibrary` hook dynamically polls the backend *only* when necessary. It checks if any asset in the cache has a status other than `READY` or `FAILED`. If processing is occurring, it silently refetches every 3000ms. Once all assets are done, polling completely shuts down to save bandwidth.
-*   **Tailwind CSS V4**: Utilizes the modern `@tailwindcss/postcss` architecture, eliminating massive config files in favor of native CSS variable design tokens.
-*   **Optimistic UI Updates**: While the UI doesn't strictly fake data, it relies on instant React Query invalidation so that the moment a user hits "Upload" or "Create Project", the UI snaps into a loading state without waiting for full page re-renders.
-*   **Design System**: Prioritizes an enterprise "SaaS" aesthetic (clean typography, subtle borders, `Lucide` iconography, and muted grays/blues) over flashy neon colors to establish trust in the AI's data.
+### Dynamic Transformation Capabilities:
+* **Verified Impact Watermark (`get_verified_badge_url`)**:
+  `https://res.cloudinary.com/.../l_text:Arial_22_bold:MIRA%20VERIFIED%20IMPACT/fl_layer_apply,g_north_east/l_text:Arial_16_bold:GPS%2028.61N%2077.20E/.../image.jpg`
+* **Side-by-Side Before/After Composite (`get_before_after_composite_url`)**:
+  `https://res.cloudinary.com/.../c_fill,w_1200,h_600/l_{after_id}/c_fill,w_600,h_600/fl_layer_apply,g_east/l_text:Arial_20_bold:BEFORE/.../image.jpg`
+* **Smart Cropping & Campaign Aspect Exporter (`get_campaign_aspect_urls`)**:
+  Generates 1:1 Square (`w_1080,h_1080`), 16:9 Landscape (`w_1920,h_1080`), and 9:16 Vertical Story (`w_1080,h_1920`) with AI focal point tracking (`g_auto, c_fill`).
 
 ---
 
-## 5. Database & Vector Schemas
+## 4. Local Project Intelligence & Grounded AI Chat (RAG)
 
-### Relational Schema (SQLite)
-*   **ProjectDB**: `id`, `name`, `description`, `tags`, `created_at`
-*   **MediaAssetDB**: `id`, `cloudinary_url`, `project_id` (Foreign Key), `processing_status` (Enum), `error_message`, `mime_type`
-*   **VisualEvidenceDB**: Extracted Moondream attributes (`description`, `activity`, `scene`, `objects`) tied to the `asset_id`.
+```
+User Query (Project Scoped)
+       │
+       ▼
+Intent Classifier (GREETING, REPORT, CHANGE, STATUS, RECENT_ACTIVITY, TIMELINE, EVIDENCE_SEARCH, GENERAL)
+       │
+       ├───────────────────────────────────────────┐
+       ▼                                           ▼
+Specialized Directive Handler              Qdrant Semantic Search
+(SSIM Diff, Report Builder, Status)      (Project-Filtered Embeddings)
+       │                                           │
+       └─────────────────────┬─────────────────────┘
+                             │
+                             ▼
+                 RAG Grounding Prompt Builder
+                             │
+                             ▼
+               TinyLlama-1.1B-Chat (CUDA FP16)
+                             │
+                             ▼
+               Structured Intelligence Response
+                 + Matching Visual Photo Cards
+```
 
-### Vector Schema (Qdrant)
-*   **Collection Name**: `visual_evidence`
-*   **Vector Size**: `384` (Using `all-MiniLM-L6-v2`)
-*   **Distance Metric**: Cosine Similarity
-*   **Payload**: The exact JSON metadata of the `VisualEvidenceDB`, allowing the search page to immediately render UI cards without requiring an expensive secondary SQL JOIN after retrieving vector matches.
+* **Model**: `TinyLlama/TinyLlama-1.1B-Chat-v1.0` loaded locally in half-precision (`torch.float16`) on CUDA.
+* **Strict Project Isolation**: Context injection filters out cross-project visual logs.
+* **Negative Query Handling**: Explicitly verifies site operations before answering; refrains from hallucinating non-existent community or physical activities.
+
+---
+
+## 5. Database Schema & Data Models
+
+### Relational Schema (SQLite / PostgreSQL Compatible)
+
+```sql
+-- Project Workspaces
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    location_name TEXT,
+    latitude FLOAT,
+    longitude FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Media Assets
+CREATE TABLE media_assets (
+    id TEXT PRIMARY KEY,
+    file_name TEXT,
+    file_path TEXT,
+    cloudinary_url TEXT,
+    cloudinary_public_id TEXT,
+    original_public_id TEXT,
+    file_size INTEGER,
+    mime_type TEXT,
+    image_latitude FLOAT,
+    image_longitude FLOAT,
+    location_source TEXT, -- 'EXIF' or 'MANUAL'
+    project_id TEXT REFERENCES projects(id),
+    assignment_status TEXT, -- 'assigned', 'needs_review', 'unassigned'
+    processing_status TEXT, -- 'QUEUED', 'ANALYZING', 'ROUTING', 'INDEXING', 'READY', 'FAILED'
+    cloudinary_metadata_synced BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Visual Evidence Extracted by VLM
+CREATE TABLE visual_evidence (
+    id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES projects(id),
+    asset_id TEXT REFERENCES media_assets(id),
+    activity TEXT,
+    scene TEXT,
+    objects TEXT, -- JSON Array
+    description TEXT,
+    project_signals TEXT, -- JSON Array
+    routing_confidence FLOAT,
+    location TEXT,
+    timestamp TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Project Scoped Chat Conversations
+CREATE TABLE chat_messages (
+    id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES projects(id),
+    role TEXT NOT NULL, -- 'user' or 'assistant'
+    message TEXT NOT NULL,
+    intent TEXT,
+    evidence TEXT, -- JSON Array of attached evidence items
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Structural Progression Comparison Pairs
+CREATE TABLE comparison_pairs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES projects(id),
+    before_asset_id TEXT REFERENCES media_assets(id),
+    after_asset_id TEXT REFERENCES media_assets(id),
+    change_score FLOAT,
+    composite_url TEXT,
+    summary TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+---
+
+## 6. Frontend State Machine (React + Vite)
+
+* **Asynchronous Polling Engine (`useMediaLibrary`)**: Dynamically polls backend endpoints at 3-second intervals during active processing transitions (`QUEUED` $\rightarrow$ `ANALYZING` $\rightarrow$ `ROUTING` $\rightarrow$ `INDEXING`), automatically sleeping when all media assets achieve `READY` status.
+* **Component Architecture**:
+  * `ProjectDetail`: Tabbed workspace featuring **Interactive Progression Slider**, **AI Project Intelligence Chat**, **Evidence Gallery**, **Milestone Timeline**, and **Audit Report Generator**.
+  * `MediaLibrary`: Visual upload manager with drag-and-drop ingestion and real-time processing indicator.
+  * `Search`: Dual-mode semantic and Cloudinary expression search interface with filter drawer.
+  * `NeedsReview`: Triage queue for manual assignment of low-confidence media assets.

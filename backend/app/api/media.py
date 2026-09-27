@@ -1,6 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+import io
+import uuid
+import urllib.request
+from typing import Optional, Dict, Any
+from PIL import Image
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Body
 from sqlalchemy.orm import Session
-from typing import Optional
 from app.database import get_db, SessionLocal
 from app.models.media import MediaAssetDB, VisualEvidenceDB
 from app.models.project import ProjectDB
@@ -11,8 +15,6 @@ from app.services.evidence_service import EvidenceService
 from app.services.embedding_service import EmbeddingService
 from app.services.qdrant_service import QdrantService
 from app.schemas.routing import RoutingStatus
-from PIL import Image
-import io
 
 router = APIRouter(prefix="/media", tags=["media"])
 
@@ -260,7 +262,27 @@ def get_all_media(project_id: Optional[str] = None, db: Session = Depends(get_db
     if project_id:
         query = query.filter(MediaAssetDB.project_id == project_id)
     assets = query.order_by(MediaAssetDB.uploaded_at.desc()).limit(100).all()
-    return assets
+    
+    results = []
+    for a in assets:
+        ev = db.query(VisualEvidenceDB).filter(VisualEvidenceDB.asset_id == a.id).first()
+        results.append({
+            "id": a.id,
+            "cloudinary_url": a.cloudinary_url,
+            "project_id": a.project_id,
+            "processing_status": a.processing_status,
+            "uploaded_at": a.uploaded_at,
+            "mime_type": a.mime_type,
+            "image_latitude": a.image_latitude,
+            "image_longitude": a.image_longitude,
+            "location_source": a.location_source,
+            "location_match_distance": a.location_match_distance,
+            "description": ev.description if ev else None,
+            "activity": ev.activity if ev else None,
+            "scene": ev.scene if ev else None,
+            "routing_confidence": ev.routing_confidence if ev else None,
+        })
+    return results
 
 @router.get("/{asset_id}")
 def get_media(asset_id: str, db: Session = Depends(get_db)):
@@ -320,10 +342,17 @@ def assign_media_to_project(
     evidence = db.query(VisualEvidenceDB).filter(VisualEvidenceDB.asset_id == asset_id).first()
     if evidence:
         evidence.project_id = project.id
-        db.commit()
+        evidence.routing_confidence = 1.0  # Approved by human reviewer
+
+    db.commit()
+    db.refresh(asset)
+    if evidence:
         db.refresh(evidence)
 
-        # Re-index into Qdrant under new project
+    print(f"[ASSIGN] Asset '{asset.id}' successfully assigned to project '{project.name}' (Status: {asset.processing_status})")
+
+    # Re-index into Qdrant under new project
+    if evidence:
         try:
             from app.services.search_service import build_searchable_document
             from app.services.embedding_service import EmbeddingService
@@ -358,9 +387,11 @@ def assign_media_to_project(
                 "latitude": evidence.latitude,
                 "longitude": evidence.longitude,
                 "cloudinary_url": evidence.cloudinary_url,
-                "routing_status": "ASSIGNED"
+                "routing_status": "ASSIGNED",
+                "routing_confidence": 1.0
             }
             qdrant_service.store_evidence(vec, payload, point_id=evidence.asset_id)
+            print(f"[ASSIGN] Re-indexed Qdrant vector point for asset '{evidence.asset_id}' under '{project.name}'")
         except Exception as e:
             print(f"[ASSIGN] Notice: Qdrant re-index deferred: {e}")
 
@@ -380,7 +411,13 @@ def assign_media_to_project(
         except Exception as e:
             print(f"[MEDIA] Notice: Cloudinary manual assignment sync deferred: {e}")
 
-    return {"message": "Assigned successfully", "asset_id": asset.id, "project_id": project.id}
+    return {
+        "status": "success",
+        "message": "Assigned successfully", 
+        "asset_id": asset.id, 
+        "project_id": project.id,
+        "processing_status": asset.processing_status
+    }
 
 
 @router.get("/{asset_id}/transformations")
@@ -546,6 +583,70 @@ def setup_upload_preset(preset_name: str = "mira_field_upload"):
     """
     res = CloudinaryService.create_upload_preset(preset_name)
     return {"status": "completed", "result": res}
+
+
+@router.post("/webhook")
+def cloudinary_webhook(
+    payload: Dict[str, Any] = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    db: Session = Depends(get_db)
+):
+    """
+    Event-driven Cloudinary webhook receiver.
+    Automatically triggers MIRA pipeline when a direct upload finishes on Cloudinary.
+    """
+    try:
+        public_id = payload.get("public_id")
+        secure_url = payload.get("secure_url") or payload.get("url")
+        notification_type = payload.get("notification_type", "upload")
+
+        if not public_id or not secure_url:
+            return {"status": "ignored", "reason": "No public_id or url in payload"}
+
+        print(f"[WEBHOOK] Received Cloudinary {notification_type} for asset: {public_id}")
+
+        # Check if already registered
+        existing = db.query(MediaAssetDB).filter(MediaAssetDB.cloudinary_public_id == public_id).first()
+        if existing:
+            return {"status": "already_exists", "asset_id": existing.id}
+
+        asset_id = str(uuid.uuid4())
+        media_asset = MediaAssetDB(
+            id=asset_id,
+            file_name=f"{public_id.split('/')[-1]}.jpg",
+            file_path=secure_url,
+            cloudinary_url=secure_url,
+            cloudinary_public_id=public_id,
+            file_size=payload.get("bytes", 0),
+            mime_type=f"image/{payload.get('format', 'jpeg')}",
+            project_id=None,
+            assignment_status="unassigned",
+            processing_status="QUEUED"
+        )
+        db.add(media_asset)
+        db.commit()
+
+        # Download bytes and queue background pipeline
+        def _fetch_and_process():
+            try:
+                req = urllib.request.Request(secure_url, headers={"User-Agent": "MIRA-Server/1.0"})
+                with urllib.request.urlopen(req) as resp:
+                    img_bytes = resp.read()
+                background_process_media(asset_id, img_bytes, f"image/{payload.get('format', 'jpeg')}")
+            except Exception as ex:
+                print(f"[WEBHOOK] Background fetch failed: {ex}")
+
+        background_tasks.add_task(_fetch_and_process)
+
+        return {
+            "status": "success",
+            "message": "Asset ingested via Cloudinary Webhook",
+            "asset_id": asset_id,
+            "public_id": public_id
+        }
+    except Exception as e:
+        print(f"[WEBHOOK] Error processing Cloudinary notification: {e}")
+        return {"status": "error", "detail": str(e)}
 
 
 @router.delete("/{asset_id}")

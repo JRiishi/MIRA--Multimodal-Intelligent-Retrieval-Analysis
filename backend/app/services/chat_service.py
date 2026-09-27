@@ -1,8 +1,10 @@
 import re
 import json
+import torch
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from app.models.project import ProjectDB
 from app.models.media import VisualEvidenceDB
@@ -21,35 +23,39 @@ def classify_intent(message: str) -> str:
     """Classify the user query into a project intelligence workflow."""
     msg = message.lower().strip()
     
+    # 0. Greetings & Small Talk
+    if re.search(r'^(hi|hello|hey|greetings|howdy|good\s+(morning|afternoon|evening)|how\s+are\s+you|who\s+are\s+you|what\s+can\s+you\s+do|what\s+is\s+your\s+name|help|thanks|thank\s+you)[\s.?!]*$', msg):
+        return "GREETING"
+        
     # 1. Report Generation
     if any(k in msg for k in ["generate report", "create report", "impact report", "project report", "audit report", "generate an impact report", "report"]):
         return "REPORT"
         
     # 2. What Changed / Progression / Before After
-    if any(k in msg for k in ["what changed", "how has the project progressed", "progression", "before and after", "before/after", "compare", "changes observed", "progressed", "change over time", "what was done", "what is new", "difference", "comparison", "changed"]):
+    if any(k in msg for k in ["what changed", "how has the project progressed", "progression", "before and after", "before/after", "compare", "changes observed", "difference", "comparison"]):
         return "CHANGE"
         
     # 3. Current Status & Progress
-    if any(k in msg for k in ["current status", "project status", "what is the status", "latest status", "where are we at", "status", "what is going on", "current stage", "is it done", "completed", "completion", "state", "current state", "condition", "how is it going", "progress"]):
+    if any(k in msg for k in ["current status", "project status", "what is the status", "latest status", "current stage", "is it done", "completed", "completion"]):
         return "STATUS"
         
     # 4. Recent Activity
-    if any(k in msg for k in ["recent activity", "what happened recently", "latest activity", "most recent", "latest updates", "recent work", "recent progress", "activities", "recently", "latest"]):
+    if any(k in msg for k in ["recent activity", "what happened recently", "latest activity", "most recent", "latest updates"]):
         return "RECENT_ACTIVITY"
         
     # 5. Timeline
-    if any(k in msg for k in ["timeline", "chronology", "over time", "over the last", "history of activity", "date by date", "milestones", "history", "chronological"]):
+    if any(k in msg for k in ["timeline", "chronology", "milestones", "history"]):
         return "TIMELINE"
         
     # 6. Evidence Search
-    if any(k in msg for k in ["show me evidence", "find visual evidence", "find evidence", "show evidence", "search for images", "find images", "show images", "evidence", "photos", "pictures", "image of", "photo of", "search for"]):
+    if any(k in msg for k in ["show me evidence", "find visual evidence", "find evidence", "show evidence", "search for images", "find images", "show images", "photo of", "image of", "show me pictures", "find photos", "pictures of"]):
         return "EVIDENCE_SEARCH"
         
     # 7. Project Summary
-    if any(k in msg for k in ["summarize this project", "project summary", "tell me about this project", "project overview", "what is this project", "summary", "overview", "about this project", "project info", "explain"]):
+    if any(k in msg for k in ["summarize this project", "project summary", "tell me about this project", "project overview", "what is this project"]):
         return "SUMMARY"
         
-    # 8. General Question
+    # 8. General Evidence Question (All other conversational queries)
     return "GENERAL"
 
 
@@ -64,19 +70,69 @@ class ChatService:
 
     def __init__(self):
         self.context_service = ProjectContextService.get_instance()
-        self.llm_model = None
         self.tokenizer = None
+        self.model = None
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model_loaded = False
-        self._try_load_llm()
+        self._ensure_llm_loaded()
 
-    def _try_load_llm(self):
-        """Optional lightweight LLM loader if available."""
+    def _ensure_llm_loaded(self):
+        """Lazy loader for local TinyLlama-1.1B LLM on GPU/CPU."""
+        if self.model_loaded:
+            return
+
         try:
-            # We keep model loading optional/lazy so tests and systems without GPU run instantly
-            self.model_loaded = False
+            print(f"[CHAT LLM] Initializing local LLM on device: {self.device}...")
+            model_id = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id, local_files_only=True)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                local_files_only=True,
+                low_cpu_mem_usage=True
+            )
+            if torch.cuda.is_available():
+                self.model = self.model.to("cuda")
+            
+            self.model_loaded = True
+            print(f"[CHAT LLM] Successfully loaded local LLM on {self.model.device} for dynamic reasoning.")
         except Exception as e:
-            print(f"[CHAT] LLM initialization notice: {e}")
+            print(f"[CHAT LLM] Notice: Local LLM initialization deferred (fallback to evidence synthesis): {e}")
             self.model_loaded = False
+
+    def _generate_with_llm(self, messages: List[Dict[str, str]], max_new_tokens: int = 160) -> Optional[str]:
+        """Generate response using local LLM with chat template."""
+        if not self.model_loaded or not self.model or not self.tokenizer:
+            return None
+
+        try:
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    temperature=0.3,
+                    do_sample=True,
+                    top_p=0.9,
+                    repetition_penalty=1.15,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    pad_token_id=self.tokenizer.eos_token_id
+                )
+            decoded = self.tokenizer.decode(
+                outputs[0][inputs["input_ids"].shape[1]:], 
+                skip_special_tokens=True
+            ).strip()
+            
+            # Clean up simulated conversation artifacts if any
+            for stop_word in ["user:", "assistant:", "<|user|>", "<|system|>", "\n\nHuman:", "\n\nAssistant:"]:
+                if stop_word in decoded:
+                    decoded = decoded.split(stop_word)[0].strip()
+
+            return decoded if len(decoded) > 5 else None
+        except Exception as e:
+            print(f"[CHAT LLM] Inference error: {e}")
+            return None
 
     def handle_project_chat(
         self, 
@@ -86,7 +142,7 @@ class ChatService:
     ) -> ChatMessageResponse:
         """
         Main orchestration for project-scoped AI chat.
-        Ensures strict project isolation and evidence-backed reasoning.
+        Uses Local LLM + Semantic Vector RAG with strict project isolation.
         """
         project = self.context_service.get_project(project_id, db)
         if not project:
@@ -100,26 +156,145 @@ class ChatService:
         intent = classify_intent(message)
         print(f"[CHAT] Scoped Project: '{project.name}' ({project_id}) | Intent: {intent} | Message: '{message}'")
 
-        # Dispatch to specialized evidence workflows
-        if intent == "STATUS":
-            response = self._handle_status(project, db)
-        elif intent == "RECENT_ACTIVITY":
-            response = self._handle_recent_activity(project, db)
-        elif intent == "EVIDENCE_SEARCH":
-            response = self._handle_evidence_search(project, message, db)
-        elif intent == "TIMELINE":
-            response = self._handle_timeline(project, db)
-        elif intent == "CHANGE":
-            response = self._handle_change(project, db)
-        elif intent == "SUMMARY":
-            response = self._handle_summary(project, db)
-        elif intent == "REPORT":
+        # 0. Greetings & Chit-Chat (Zero unwanted visual attachments, human tone)
+        if intent == "GREETING":
+            if any(k in message.lower() for k in ["thank", "thx"]):
+                ans = f"You're welcome! Let me know if you need any progress analysis, visual evidence checks, or reports for **{project.name}**."
+            else:
+                ans = f"Hello! I am MIRA AI, your project intelligence assistant for **{project.name}**. I track site progress, analyze visual evidence, detect before/after changes, and answer queries grounded strictly in verified site records. How can I help you today?"
+            response = ChatMessageResponse(
+                answer=ans,
+                project_id=project.id,
+                intent="GREETING",
+                evidence=[]
+            )
+            self._save_chat_history(project_id, message, response, db)
+            return response
+
+        # 1. Report Generation Workflow
+        if intent == "REPORT":
             report_data = self.generate_project_report(project_id, db)
             response = ChatMessageResponse(
                 answer=self._format_report_answer(report_data),
                 project_id=project_id,
                 intent="REPORT",
                 evidence=report_data.key_evidence
+            )
+            self._save_chat_history(project_id, message, response, db)
+            return response
+
+        # 2. Structural Change / Before-After Progression
+        if intent == "CHANGE":
+            response = self._handle_change(project, db)
+            self._save_chat_history(project_id, message, response, db)
+            return response
+
+        # 3. Evidence Search Workflow
+        if intent == "EVIDENCE_SEARCH":
+            response = self._handle_evidence_search(project, message, db)
+            self._save_chat_history(project_id, message, response, db)
+            return response
+
+        # 4. Timeline Workflow
+        if intent == "TIMELINE":
+            response = self._handle_timeline(project, db)
+            self._save_chat_history(project_id, message, response, db)
+            return response
+
+        # 5. Current Status Workflow
+        if intent == "STATUS":
+            response = self._handle_status(project, db)
+            self._save_chat_history(project_id, message, response, db)
+            return response
+
+        # 6. Recent Activity Workflow
+        if intent == "RECENT_ACTIVITY":
+            response = self._handle_recent_activity(project, db)
+            self._save_chat_history(project_id, message, response, db)
+            return response
+
+        # 7. Project Summary Workflow
+        if intent == "SUMMARY":
+            response = self._handle_summary(project, db)
+            self._save_chat_history(project_id, message, response, db)
+            return response
+
+        # 8. General Conversational & Grounded QA Workflow
+        all_ev = self.context_service.get_all_project_evidence(project.id, db)
+        
+        # Check if user is asking about unrecorded activities (e.g. community development, schools, other activities besides...)
+        asking_other = bool(re.search(
+            r'(other activities|besides|apart from|any other|community development|health|education|school|hospital|park|tree|planting)', 
+            message, 
+            re.IGNORECASE
+        ))
+
+        semantic_evidence = self.context_service.search_project_evidence(
+            project_id=project.id,
+            query=message,
+            limit=4,
+            min_score=0.25
+        )
+
+        if asking_other and not semantic_evidence:
+            loc_str = f" in {project.location_name}" if project.location_name else ""
+            ans_lines = [
+                f"Based on the verified site records for **{project.name}**{loc_str}, there are no documented records of community development or other non-construction activities.\n",
+                f"The only activities verified in the project's visual log are:"
+            ]
+            if all_ev:
+                for ev in all_ev:
+                    d = ev.timestamp or (ev.created_at.strftime("%Y-%m-%d") if ev.created_at else "Recorded")
+                    ans_lines.append(f"- **{d}**: {ev.activity or 'Field activity'} — *{ev.description or 'Visual record.'}*")
+            else:
+                ans_lines.append("- No field observations uploaded yet.")
+            ans_lines.append("\nNo other field operations have been registered.")
+
+            response = ChatMessageResponse(
+                answer="\n".join(ans_lines),
+                project_id=project.id,
+                intent="GENERAL",
+                evidence=[]
+            )
+            self._save_chat_history(project_id, message, response, db)
+            return response
+
+        # If semantic matches exist or general question, attempt local LLM generation
+        evidence_lines = []
+        for ev in all_ev:
+            d_str = ev.timestamp or (ev.created_at.strftime("%Y-%m-%d") if ev.created_at else "Recent observation")
+            act = ev.activity or "Field activity"
+            desc = ev.description or "No description"
+            loc = ev.location or project.location_name or "Project site"
+            evidence_lines.append(f"- Date: {d_str} | Activity: {act} | Location: {loc} | Visual Description: {desc}")
+
+        evidence_context = "\n".join(evidence_lines) if evidence_lines else "No photographic records uploaded yet."
+        display_evidence = semantic_evidence if (semantic_evidence and len(semantic_evidence) > 0) else []
+
+        system_content = (
+            f"You are MIRA AI, an expert project intelligence analyst for '{project.name}'. "
+            f"Answer the user's question accurately, concisely, and factually in 2-3 sentences based strictly on the verified project records provided below. "
+            f"If a user asks about an event or activity not in the records, state clearly that no such activity is documented. Do not make up facts.\n\n"
+            f"Project: {project.name}\n"
+            f"Location: {project.location_name or 'Site Location'}\n"
+            f"Description: {project.description or 'Project Workspace'}\n\n"
+            f"Verified Project Visual Evidence Records:\n"
+            f"{evidence_context}"
+        )
+
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": message}
+        ]
+
+        llm_answer = self._generate_with_llm(messages, max_new_tokens=160)
+
+        if llm_answer and len(llm_answer) > 10:
+            response = ChatMessageResponse(
+                answer=llm_answer,
+                project_id=project.id,
+                intent="GENERAL",
+                evidence=display_evidence
             )
         else:
             response = self._handle_general_query(project, message, db)
@@ -129,7 +304,43 @@ class ChatService:
         return response
 
     # -------------------------------------------------------------
-    # WORKFLOW 1: STATUS
+    # EVIDENCE SEARCH WORKFLOW
+    # -------------------------------------------------------------
+    def _handle_evidence_search(self, project: ProjectDB, message: str, db: Session) -> ChatMessageResponse:
+        cleaned_query = re.sub(
+            r'(show me evidence of|find visual evidence related to|find evidence of|find images of|show images of|show evidence|find evidence|search for|images of|evidence related to)',
+            '',
+            message,
+            flags=re.IGNORECASE
+        ).strip()
+        if not cleaned_query:
+            cleaned_query = message
+
+        results = self.context_service.search_project_evidence(
+            project_id=project.id,
+            query=cleaned_query,
+            limit=4,
+            min_score=0.30
+        )
+
+        if not results:
+            return ChatMessageResponse(
+                answer=f"Insufficient visual evidence found for \"{cleaned_query}\" in this project.",
+                project_id=project.id,
+                intent="EVIDENCE_SEARCH",
+                evidence=[]
+            )
+
+        answer = f"Found **{len(results)}** relevant visual evidence item(s) related to **\"{cleaned_query}\"** in **{project.name}**:"
+        return ChatMessageResponse(
+            answer=answer,
+            project_id=project.id,
+            intent="EVIDENCE_SEARCH",
+            evidence=results
+        )
+
+    # -------------------------------------------------------------
+    # FALLBACK WORKFLOW 1: STATUS
     # -------------------------------------------------------------
     def _handle_status(self, project: ProjectDB, db: Session) -> ChatMessageResponse:
         latest_ev = self.context_service.get_latest_evidence(project.id, db, limit=3)
@@ -172,7 +383,7 @@ class ChatService:
         )
 
     # -------------------------------------------------------------
-    # WORKFLOW 2: RECENT ACTIVITY
+    # FALLBACK WORKFLOW 2: RECENT ACTIVITY
     # -------------------------------------------------------------
     def _handle_recent_activity(self, project: ProjectDB, db: Session) -> ChatMessageResponse:
         recent_ev = self.context_service.get_latest_evidence(project.id, db, limit=5)
@@ -209,44 +420,7 @@ class ChatService:
         )
 
     # -------------------------------------------------------------
-    # WORKFLOW 3: EVIDENCE SEARCH
-    # -------------------------------------------------------------
-    def _handle_evidence_search(self, project: ProjectDB, message: str, db: Session) -> ChatMessageResponse:
-        # Extract search keywords / clean query
-        cleaned_query = re.sub(
-            r'(show me evidence of|find visual evidence related to|find evidence of|find images of|show images of|show evidence|find evidence|search for|images of|evidence related to)',
-            '',
-            message,
-            flags=re.IGNORECASE
-        ).strip()
-        if not cleaned_query:
-            cleaned_query = message
-
-        results = self.context_service.search_project_evidence(
-            project_id=project.id,
-            query=cleaned_query,
-            limit=4,
-            min_score=0.30
-        )
-
-        if not results:
-            return ChatMessageResponse(
-                answer=f"Insufficient visual evidence found for \"{cleaned_query}\" in this project.",
-                project_id=project.id,
-                intent="EVIDENCE_SEARCH",
-                evidence=[]
-            )
-
-        answer = f"Found **{len(results)}** relevant visual evidence item(s) related to **\"{cleaned_query}\"** in **{project.name}**:"
-        return ChatMessageResponse(
-            answer=answer,
-            project_id=project.id,
-            intent="EVIDENCE_SEARCH",
-            evidence=results
-        )
-
-    # -------------------------------------------------------------
-    # WORKFLOW 4: TIMELINE
+    # FALLBACK WORKFLOW 3: TIMELINE
     # -------------------------------------------------------------
     def _handle_timeline(self, project: ProjectDB, db: Session) -> ChatMessageResponse:
         timeline_items = self.context_service.get_timeline(project.id, db)
@@ -282,7 +456,7 @@ class ChatService:
         )
 
     # -------------------------------------------------------------
-    # WORKFLOW 5: WHAT CHANGED / PROGRESSION
+    # FALLBACK WORKFLOW 4: WHAT CHANGED / PROGRESSION
     # -------------------------------------------------------------
     def _handle_change(self, project: ProjectDB, db: Session) -> ChatMessageResponse:
         earliest, latest = self.context_service.get_earliest_and_latest(project.id, db)
@@ -296,7 +470,7 @@ class ChatService:
 
         if earliest.id == latest.id:
             return ChatMessageResponse(
-                answer=f"Currently, only a single evidence record exists for **{project.name}** (Activity: *{latest.activity}* on {latest.timestamp or 'initial date'}). Additional sequential uploads will enable automated before/after structural change detection.",
+                answer=f"Currently, a single observation exists for **{project.name}** (Activity: *{latest.activity}* on {latest.timestamp or 'initial date'}). Additional sequential uploads will enable automated before/after structural change detection.",
                 project_id=project.id,
                 intent="CHANGE",
                 evidence=[
@@ -354,7 +528,7 @@ class ChatService:
         )
 
     # -------------------------------------------------------------
-    # WORKFLOW 6: SUMMARY
+    # FALLBACK WORKFLOW 5: SUMMARY
     # -------------------------------------------------------------
     def _handle_summary(self, project: ProjectDB, db: Session) -> ChatMessageResponse:
         all_ev = self.context_service.get_all_project_evidence(project.id, db)
@@ -400,7 +574,7 @@ class ChatService:
         )
 
     # -------------------------------------------------------------
-    # WORKFLOW 7: GENERAL QUERY (Project-Scoped Semantic RAG)
+    # FALLBACK WORKFLOW 6: GENERAL QUERY
     # -------------------------------------------------------------
     def _handle_general_query(self, project: ProjectDB, message: str, db: Session) -> ChatMessageResponse:
         results = self.context_service.search_project_evidence(
@@ -420,7 +594,6 @@ class ChatService:
             )
 
         if not results:
-            # When semantic search doesn't find a direct query hit, provide a grounded synthesis of available evidence
             latest = all_ev[-1]
             d_str = latest.timestamp or (latest.created_at.strftime("%B %d, %Y") if latest.created_at else "recent observation")
             activities = list(dict.fromkeys([e.activity for e in all_ev if e.activity]))
