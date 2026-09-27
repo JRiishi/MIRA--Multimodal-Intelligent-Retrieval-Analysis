@@ -94,20 +94,20 @@ class LayaService:
                 loc_details.append(f"~{distance_map[p.id]:.1f}km away")
 
             loc_str = f" ({', '.join(loc_details)})" if loc_details else ""
-            criteria_text = f"{p.name}{loc_str}: {desc_clean}"
+            criteria_text = f"{p.name}{loc_str}: {desc_clean}. Covers all project stages: baseline site condition, active construction, and completed infrastructure milestones (e.g. finished paved roads, completed solar rooftops, clean river remediation)."
             if tags_clean:
                 criteria_text += f". Keywords: {tags_clean}"
             criteria[slug] = criteria_text
 
-        # Add an 'unrelated_other' criteria option so Laya can distinguish non-matching content at the location
-        criteria["unrelated_other"] = "Unrelated field activity, household object, or completely irrelevant scene not matching any listed project."
+        # Specific unrelated_other definition to prevent completed infrastructure from being misclassified
+        criteria["unrelated_other"] = "Completely non-infrastructure content such as indoor living room, personal selfie, food, pets, or unrelated consumer goods."
 
         print(f"[LAYA] Candidate criteria options ({len(criteria)}): {list(criteria.keys())}")
 
         questions = {
             "assigned_project": {
                 "type": "choice",
-                "instructions": "Which active project at this location does this visual evidence belong to?",
+                "instructions": "Which active or completed project at this location does this visual evidence belong to?",
                 "criteria": criteria
             }
         }
@@ -147,8 +147,11 @@ class LayaService:
                 assign_reason = f"Laya decision model chose '{selected_proj.name}' with {confidence:.1%} confidence."
                 review_reason = f"Laya moderate confidence match ({confidence:.1%}) with '{selected_proj.name}'. Manual review suggested."
 
-            if confidence >= 0.40:
-                print(f"[LAYA] -> ASSIGNED to '{selected_proj.name}' ({confidence:.4f})")
+            # If geolocated right at the site (<= 5km), lower assignment threshold to 0.28
+            effective_assign_thresh = 0.28 if (location_used and dist_km is not None and dist_km <= 5.0) else 0.35
+
+            if confidence >= effective_assign_thresh:
+                print(f"[LAYA] -> ASSIGNED to '{selected_proj.name}' ({confidence:.4f} >= {effective_assign_thresh})")
                 return ProjectRoutingResult(
                     asset_id=asset_id,
                     selected_project_id=selected_proj.id,
@@ -158,7 +161,7 @@ class LayaService:
                     distance_km=dist_km,
                     location_used=location_used
                 )
-            elif confidence >= 0.28:
+            elif confidence >= 0.20:
                 print(f"[LAYA] -> NEEDS_REVIEW for '{selected_proj.name}' ({confidence:.4f})")
                 return ProjectRoutingResult(
                     asset_id=asset_id,
@@ -169,6 +172,7 @@ class LayaService:
                     distance_km=dist_km,
                     location_used=location_used
                 )
+
         
         print(f"[LAYA] -> UNASSIGNED (confidence {confidence:.4f} below threshold or invalid choice)")
         return ProjectRoutingResult(

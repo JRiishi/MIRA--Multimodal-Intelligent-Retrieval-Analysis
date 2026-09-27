@@ -81,3 +81,20 @@ export function useDeleteMedia() {
     },
   });
 }
+
+export function useAssignMedia() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ assetId, projectId }: { assetId: string; projectId: string }) => {
+      const { data } = await api.post(`/media/${assetId}/assign`, { project_id: projectId });
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['media'] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+}
+
+

@@ -259,6 +259,79 @@ def get_media(asset_id: str, db: Session = Depends(get_db)):
         } if evidence else None
     }
 
+from pydantic import BaseModel
+
+class AssignProjectRequest(BaseModel):
+    project_id: str
+
+@router.post("/{asset_id}/assign")
+def assign_media_to_project(
+    asset_id: str, 
+    req: AssignProjectRequest, 
+    db: Session = Depends(get_db)
+):
+    asset = db.query(MediaAssetDB).filter(MediaAssetDB.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Media asset not found")
+        
+    project = db.query(ProjectDB).filter(ProjectDB.id == req.project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    asset.project_id = project.id
+    asset.processing_status = "READY"
+    
+    evidence = db.query(VisualEvidenceDB).filter(VisualEvidenceDB.asset_id == asset_id).first()
+    if evidence:
+        evidence.project_id = project.id
+        db.commit()
+        db.refresh(evidence)
+
+        # Re-index into Qdrant under new project
+        try:
+            from app.services.search_service import build_searchable_document
+            from app.services.embedding_service import EmbeddingService
+            from app.services.qdrant_service import QdrantService
+            
+            embed_service = EmbeddingService.get_instance()
+            qdrant_service = QdrantService.get_instance()
+
+            doc = build_searchable_document(
+                project_name=project.name,
+                activity=evidence.activity,
+                scene=evidence.scene,
+                objects=evidence.objects,
+                description=evidence.description,
+                project_signals=evidence.project_signals,
+                location_name=project.location_name or evidence.location
+            )
+            vec = embed_service.get_embedding(doc)
+            payload = {
+                "asset_id": evidence.asset_id,
+                "evidence_id": evidence.id,
+                "project_id": project.id,
+                "project_name": project.name,
+                "description": evidence.description,
+                "activity": evidence.activity,
+                "scene": evidence.scene,
+                "objects": evidence.objects,
+                "project_signals": evidence.project_signals,
+                "timestamp": evidence.created_at.isoformat() if evidence.created_at else None,
+                "location": project.location_name or evidence.location,
+                "location_name": project.location_name or evidence.location,
+                "latitude": evidence.latitude,
+                "longitude": evidence.longitude,
+                "cloudinary_url": evidence.cloudinary_url,
+                "routing_status": "ASSIGNED"
+            }
+            qdrant_service.store_evidence(vec, payload, point_id=evidence.asset_id)
+        except Exception as e:
+            print(f"[MEDIA] Warning: could not re-index into Qdrant: {e}")
+    else:
+        db.commit()
+
+    return {"message": "Assigned successfully", "asset_id": asset.id, "project_id": project.id}
+
 @router.delete("/{asset_id}")
 def delete_media(asset_id: str, db: Session = Depends(get_db)):
     asset = db.query(MediaAssetDB).filter(MediaAssetDB.id == asset_id).first()
@@ -280,4 +353,5 @@ def delete_media(asset_id: str, db: Session = Depends(get_db)):
         print(f"[MEDIA] Notice: Could not delete Qdrant vector for asset {asset_id}: {e}")
 
     return {"message": "Deleted successfully"}
+
 

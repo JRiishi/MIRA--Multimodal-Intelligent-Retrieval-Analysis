@@ -53,7 +53,7 @@ def build_evidence_text(evidence_data: dict) -> str:
 def build_project_text(project) -> str:
     """
     Construct a normalized text representation of a project for embedding.
-    Uses name + description + tags.
+    Uses name + description + tags + lifecycle milestones.
     """
     name = _normalize_string(project.name or "")
     description = _normalize_string(project.description or "")
@@ -66,8 +66,10 @@ def build_project_text(project) -> str:
         parts.append(f"Description: {description}")
     if tags:
         parts.append(f"Tags: {', '.join(tags)}")
+    parts.append("Includes baseline site condition, active construction, and completed infrastructure milestones.")
 
     return ". ".join(parts)
+
 
 
 class ProjectRouter:
