@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run verify:no-mocks",
+    "verify:no-mocks": "node scripts/verify-no-mocks.mjs",
     "lint": "oxlint",
     "preview": "vite preview"
   },

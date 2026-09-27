@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
-import type { MediaAsset, MediaDetail } from '../types';
+import { TERMINAL_STATUSES, type MediaAsset, type MediaDetail } from '../types';
 
 export function useMediaLibrary() {
   return useQuery({
@@ -14,7 +14,7 @@ export function useMediaLibrary() {
       const data = query.state.data;
       if (!data) return false;
       const hasProcessing = data.some(
-        asset => !['READY', 'FAILED', 'NEEDS_REVIEW'].includes(asset.processing_status)
+        asset => !TERMINAL_STATUSES.includes(asset.processing_status)
       );
       return hasProcessing ? 3000 : false;
     },
@@ -32,7 +32,7 @@ export function useMediaDetail(assetId: string) {
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return false;
-      const isProcessing = !['READY', 'FAILED', 'NEEDS_REVIEW'].includes(data.processing_status);
+      const isProcessing = !TERMINAL_STATUSES.includes(data.processing_status);
       return isProcessing ? 3000 : false;
     },
   });

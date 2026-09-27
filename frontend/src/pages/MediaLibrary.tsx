@@ -1,614 +1,783 @@
-import React, { useState, useRef } from 'react';
-import { useMediaLibrary, useUploadMedia, useDeleteMedia, useSyncAllCloudinaryMetadata, useAssetTransformations } from '../hooks/media';
+import { useMemo, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Images, Upload, RefreshCw, ExternalLink, X, Layers, Crop, Zap } from 'lucide-react';
+import {
+  useMediaLibrary,
+  useDeleteMedia,
+  useSyncAllCloudinaryMetadata,
+  useAssetTransformations,
+  useUploadMedia,
+} from '../hooks/media';
 import { useProjects } from '../hooks/projects';
-import { 
-  UploadCloud, 
-  Image as ImageIcon, 
-  Loader2, 
-  AlertCircle, 
-  Trash2, 
-  MapPin, 
-  Navigation, 
-  X, 
-  Sparkles, 
-  ShieldCheck, 
-  Layers, 
-  ExternalLink, 
-  Copy, 
-  Check, 
-  RefreshCw 
-} from 'lucide-react';
-import { format } from 'date-fns';
-import type { ProcessingStatus, MediaAsset } from '../types';
+import { useUploadSignature, directUpload as directUploadToCdn } from '../hooks/upload';
+import {
+  EmptyState,
+  ErrorState,
+  Skeleton,
+  SkeletonCards,
+  SkeletonRows,
+  Chip,
+  Coordinate,
+  ScoreReadout,
+  Modal,
+  SegmentedControl,
+  Field,
+  AssetId,
+} from '../components/ui';
+import { humanizeToken, relativeTime, statusOf } from '../lib/presentation';
+import type { MediaAsset } from '../types';
 
-export default function MediaLibrary() {
-  const { data: media, isLoading, error } = useMediaLibrary();
-  const { data: projects } = useProjects();
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [activeAsset, setActiveAsset] = useState<MediaAsset | null>(null);
-  const [modalTab, setModalTab] = useState<'original' | 'provenance' | 'campaign'>('original');
-  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+type Filter = 'all' | 'exceptions' | 'ready' | 'geo';
 
-  const deleteMutation = useDeleteMedia();
-  const syncMetadataMutation = useSyncAllCloudinaryMetadata();
-  const { data: assetTransformations } = useAssetTransformations(activeAsset?.id || null);
+const FILTERS: { value: Filter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'exceptions', label: 'Exceptions' },
+  { value: 'ready', label: 'Verified' },
+  { value: 'geo', label: 'Geo-tagged' },
+];
 
-  const getStatusDisplay = (status: ProcessingStatus) => {
-    switch (status) {
-      case 'QUEUED':
-      case 'UPLOADING':
-        return { label: 'Uploading...', bg: 'bg-blue-100', text: 'text-blue-700', icon: Loader2 };
-      case 'ANALYZING':
-      case 'ROUTING':
-      case 'INDEXING':
-        return { label: 'AI Processing', bg: 'bg-amber-100', text: 'text-amber-700', icon: Loader2 };
-      case 'READY':
-        return { label: 'Ready', bg: 'bg-green-100', text: 'text-green-700', icon: null };
-      case 'NEEDS_REVIEW':
-        return { label: 'Needs Review', bg: 'bg-yellow-100', text: 'text-yellow-800', icon: AlertCircle };
-      case 'UNASSIGNED':
-        return { label: 'Unassigned', bg: 'bg-gray-100', text: 'text-gray-700', icon: null };
-      case 'FAILED':
-        return { label: 'Failed', bg: 'bg-red-100', text: 'text-red-700', icon: AlertCircle };
-      default:
-        return { label: status, bg: 'bg-gray-100', text: 'text-gray-700', icon: null };
-    }
-  };
+/* ------------------------------------------------------------------ */
+/* Upload                                                              */
+/* ------------------------------------------------------------------ */
 
-  const getProjectName = (projectId: string | null) => {
-    if (!projectId) return 'Unassigned';
-    const project = projects?.find(p => p.id === projectId);
-    return project ? project.name : 'Unknown Project';
+function UploadDialog({
+  open,
+  onClose,
+  onUpload,
+  onDirectUpload,
+  pending,
+  directPending,
+  signatureUnavailable,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onUpload: (file: File, lat: number | null, lng: number | null) => void;
+  onDirectUpload: (file: File) => void;
+  pending: boolean;
+  directPending: boolean;
+  signatureUnavailable: boolean;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [lat, setLat] = useState('');
+  const [lng, setLng] = useState('');
+
+  const latNum = lat === '' ? null : Number(lat);
+  const lngNum = lng === '' ? null : Number(lng);
+  const coordError =
+    (latNum == null) !== (lngNum == null)
+      ? 'Enter both coordinates or leave both blank to rely on EXIF.'
+      : undefined;
+
+  const busy = pending || directPending;
+
+  const close = () => {
+    setFile(null);
+    setLat('');
+    setLng('');
+    onClose();
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      <header className="px-8 py-5 bg-white border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-primary-50 text-primary-700 border border-primary-100 rounded-full text-[11px] font-semibold uppercase tracking-wider mb-1">
-            <Sparkles className="w-3 h-3 text-primary-600" />
-            Cloudinary Media Backbone
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Media Library</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Automated visual intelligence, EXIF extraction, and Cloudinary explicit write-back.</p>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={() => syncMetadataMutation.mutate()}
-            disabled={syncMetadataMutation.isPending}
-            className="btn-secondary text-xs flex items-center gap-1.5 py-2 px-3"
-            title="Sync all evidence metadata, GPS, and tags to Cloudinary"
+    <Modal
+      open={open}
+      onClose={close}
+      title="Ingest field capture"
+      width="max-w-md"
+      footer={
+        <>
+          <button type="button" onClick={close} className="btn btn-secondary">
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!file || Boolean(coordError) || busy}
+            onClick={() => {
+              if (!file) return;
+              if (signatureUnavailable) onUpload(file, latNum, lngNum);
+              else onDirectUpload(file);
+            }}
+            className="btn btn-primary"
           >
-            {syncMetadataMutation.isPending ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-600" />
-            ) : (
-              <RefreshCw className="w-3.5 h-3.5 text-gray-600" />
+            {directPending ? 'Sending to CDN' : pending ? 'Uploading' : 'Ingest capture'}
+          </button>
+        </>
+      }
+    >
+      <div className="p-4 space-y-4">
+        <Field label="Photograph" hint="JPEG or PNG. EXIF coordinates are read automatically.">
+          {() => (
+            <div className="flex items-center gap-3">
+              <label className="btn btn-secondary cursor-pointer">
+                <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                Choose file
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+              </label>
+              {file ? (
+                <span className="meta truncate">
+                  {file.name} ({Math.round(file.size / 1024)} kB)
+                </span>
+              ) : (
+                <span className="meta">no file selected</span>
+              )}
+            </div>
+          )}
+        </Field>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Latitude" error={coordError}>
+            {(p) => (
+              <input
+                {...p}
+                type="number"
+                step="0.0001"
+                className="field value"
+                value={lat}
+                onChange={(e) => setLat(e.target.value)}
+                placeholder="27.5412"
+              />
             )}
-            <span>{syncMetadataMutation.isPending ? 'Syncing to Cloudinary...' : 'Sync Cloudinary Metadata'}</span>
-          </button>
+          </Field>
+          <Field label="Longitude">
+            {(p) => (
+              <input
+                {...p}
+                type="number"
+                step="0.0001"
+                className="field value"
+                value={lng}
+                onChange={(e) => setLng(e.target.value)}
+                placeholder="72.2913"
+              />
+            )}
+          </Field>
+        </div>
 
-          <button 
-            onClick={() => setIsUploadModalOpen(true)}
-            className="btn-primary flex items-center gap-1.5 text-xs py-2 px-3.5"
+        {/* Transport is an implementation detail of one action, so it is
+            stated rather than hidden, and it always has a working fallback. */}
+        <p className="text-[11.5px] text-ink-3 leading-relaxed flex items-start gap-2">
+          <Zap className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden="true" />
+          <span>
+            {signatureUnavailable
+              ? 'No upload signature available, so the file is routed through the API server.'
+              : 'The file goes straight to the Cloudinary CDN, so a large photograph does not hold an API worker. Analysis starts from the upload webhook.'}
+          </span>
+        </p>
+
+        {file && !signatureUnavailable && (
+          <button
+            type="button"
+            onClick={() => onUpload(file, latNum, lngNum)}
+            disabled={Boolean(coordError) || busy}
+            className="btn btn-sm btn-ghost w-full"
           >
-            <UploadCloud className="w-4 h-4" />
-            Upload Media
+            Send through the API server instead
           </button>
-        </div>
-      </header>
-
-      {syncMetadataMutation.isSuccess && (
-        <div className="mx-8 mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex justify-between items-center animate-in fade-in">
-          <span>✓ Successfully synchronized visual evidence context and tags across Cloudinary assets!</span>
-          <span className="font-bold">{syncMetadataMutation.data?.synced_count} assets updated</span>
-        </div>
-      )}
-
-      <div className="flex-1 p-8 overflow-y-auto">
-        {isLoading ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {[1, 2, 3, 4].map(i => (
-              <div key={i} className="card aspect-square animate-pulse bg-gray-200"></div>
-            ))}
-          </div>
-        ) : error ? (
-          <div className="p-4 bg-red-50 border border-red-100 rounded-md text-red-700 text-sm">
-            Unable to load media library.
-          </div>
-        ) : !media || media.length === 0 ? (
-          <div className="text-center py-20 bg-white border border-gray-200 rounded-lg border-dashed">
-            <ImageIcon className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">No media uploaded</h3>
-            <p className="text-gray-500 mt-1 text-sm max-w-sm mx-auto">
-              Upload field media and the system will automatically analyze the content and route it to the geographically matching project.
-            </p>
-            <button 
-              onClick={() => setIsUploadModalOpen(true)}
-              className="mt-6 btn-secondary text-sm"
-            >
-              Upload First Photo
-            </button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {media.map((asset) => {
-              const status = getStatusDisplay(asset.processing_status);
-              const StatusIcon = status.icon;
-              
-              return (
-                <div 
-                  key={asset.id} 
-                  onClick={() => {
-                    setActiveAsset(asset);
-                    setModalTab('original');
-                  }}
-                  className="card group cursor-pointer flex flex-col h-[290px] border border-gray-200 hover:shadow-lg transition-all"
-                >
-                  {/* Image Area */}
-                  <div className="relative flex-1 bg-gray-100 overflow-hidden">
-                    {asset.cloudinary_url ? (
-                      <img 
-                        src={asset.cloudinary_url} 
-                        alt="Media Asset" 
-                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-300">
-                        <ImageIcon className="w-8 h-8" />
-                      </div>
-                    )}
-                    
-                    {/* Status Badge Over Image */}
-                    <div className={`absolute top-3 right-3 px-2.5 py-1 text-xs font-medium rounded-full shadow-sm flex items-center gap-1.5 ${status.bg} ${status.text}`}>
-                      {StatusIcon && <StatusIcon className={`w-3 h-3 ${status.icon === Loader2 ? 'animate-spin' : ''}`} />}
-                      {status.label}
-                    </div>
-
-                    {/* Geotag Source Badge */}
-                    {asset.location_source && asset.location_source !== 'NONE' && (
-                      <div className="absolute top-3 left-3 px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase rounded bg-black/60 text-white backdrop-blur-sm">
-                        📍 {asset.location_source} GPS
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="p-4 bg-white border-t border-gray-100 flex justify-between items-start">
-                    <div className="min-w-0 flex-1 pr-2">
-                      <p className="text-sm font-medium text-gray-900 truncate">
-                        {getProjectName(asset.project_id)}
-                      </p>
-                      
-                      {asset.image_latitude != null && asset.image_longitude != null && (
-                        <div className="flex items-center gap-1 text-[11px] text-primary-700 mt-1">
-                          <MapPin className="w-3 h-3 flex-shrink-0" />
-                          <span className="font-mono">
-                            {asset.image_latitude.toFixed(3)}, {asset.image_longitude.toFixed(3)}
-                          </span>
-                          {asset.location_match_distance != null && (
-                            <span className="text-gray-400">
-                              ({asset.location_match_distance.toFixed(1)} km)
-                            </span>
-                          )}
-                        </div>
-                      )}
-
-                      <p className="text-xs text-gray-400 mt-1">
-                        {format(new Date(asset.uploaded_at), 'MMM d, h:mm a')}
-                      </p>
-                    </div>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteMutation.mutate(asset.id);
-                      }}
-                      disabled={deleteMutation.isPending}
-                      className="text-gray-400 hover:text-red-500 transition-colors p-1 flex-shrink-0"
-                      title="Delete asset"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
         )}
       </div>
-
-      {/* Cloudinary Lightbox Modal */}
-      {activeAsset && (
-        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden border border-gray-200" onClick={e => e.stopPropagation()}>
-            <div className="px-5 py-3.5 border-b border-gray-100 flex justify-between items-center bg-gray-50/70">
-              <span className="text-xs font-bold text-gray-900 uppercase tracking-wider">Cloudinary Media Transformations</span>
-              <button onClick={() => setActiveAsset(null)} className="text-gray-400 hover:text-gray-600 p-1 rounded-full">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Mode Tabs */}
-            <div className="px-5 pt-3 pb-2 bg-gray-50 border-b border-gray-200 flex items-center gap-1.5 overflow-x-auto flex-shrink-0">
-              <button
-                onClick={() => setModalTab('original')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                  modalTab === 'original' ? 'bg-white text-gray-900 shadow-xs border border-gray-200' : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                <span>Original Delivery</span>
-              </button>
-              <button
-                onClick={() => setModalTab('provenance')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                  modalTab === 'provenance' ? 'bg-emerald-50 text-emerald-800 shadow-xs border border-emerald-200' : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> Provenance Watermark
-              </button>
-              <button
-                onClick={() => setModalTab('campaign')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                  modalTab === 'campaign' ? 'bg-primary-50 text-primary-800 shadow-xs border border-primary-200' : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5 text-primary-600" /> Campaign Crops
-              </button>
-            </div>
-
-            <div className="p-5 overflow-y-auto space-y-4 flex-1">
-              <div className="rounded-xl overflow-hidden border border-gray-200 aspect-video bg-gray-950 flex items-center justify-center relative">
-                {modalTab === 'original' && (
-                  <img 
-                    src={assetTransformations?.optimized_url || activeAsset.cloudinary_url || ''} 
-                    alt="Original Delivery" 
-                    onError={(e) => {
-                      if (activeAsset.cloudinary_url && e.currentTarget.src !== activeAsset.cloudinary_url) {
-                        e.currentTarget.src = activeAsset.cloudinary_url;
-                      }
-                    }}
-                    className="max-h-64 w-full object-contain"
-                  />
-                )}
-
-                {modalTab === 'provenance' && (
-                  <img 
-                    src={assetTransformations?.verified_badge_url || activeAsset.cloudinary_url || ''} 
-                    alt="Provenance Watermarked" 
-                    onError={(e) => {
-                      if (activeAsset.cloudinary_url && e.currentTarget.src !== activeAsset.cloudinary_url) {
-                        e.currentTarget.src = activeAsset.cloudinary_url;
-                      }
-                    }}
-                    className="max-h-64 w-full object-contain"
-                  />
-                )}
-
-                {modalTab === 'campaign' && (
-                  <div className="grid grid-cols-3 gap-2 p-2 w-full h-full items-center bg-gray-900">
-                    <div className="space-y-1 text-center">
-                      <div className="aspect-square bg-black rounded border border-gray-700 overflow-hidden">
-                        <img 
-                          src={assetTransformations?.campaign_aspects?.square_1_1 || activeAsset.cloudinary_url || ''} 
-                          alt="Square 1:1"
-                          onError={(e) => {
-                            if (activeAsset.cloudinary_url && e.currentTarget.src !== activeAsset.cloudinary_url) {
-                              e.currentTarget.src = activeAsset.cloudinary_url;
-                            }
-                          }}
-                          className="w-full h-full object-cover" 
-                        />
-                      </div>
-                      <span className="text-[10px] text-gray-300 font-mono">1:1 Square</span>
-                    </div>
-                    <div className="space-y-1 text-center">
-                      <div className="aspect-video bg-black rounded border border-gray-700 overflow-hidden">
-                        <img 
-                          src={assetTransformations?.campaign_aspects?.landscape_16_9 || activeAsset.cloudinary_url || ''} 
-                          alt="Landscape 16:9"
-                          onError={(e) => {
-                            if (activeAsset.cloudinary_url && e.currentTarget.src !== activeAsset.cloudinary_url) {
-                              e.currentTarget.src = activeAsset.cloudinary_url;
-                            }
-                          }}
-                          className="w-full h-full object-cover" 
-                        />
-                      </div>
-                      <span className="text-[10px] text-gray-300 font-mono">16:9 Landscape</span>
-                    </div>
-                    <div className="space-y-1 text-center">
-                      <div className="aspect-[9/16] max-h-44 mx-auto bg-black rounded border border-gray-700 overflow-hidden">
-                        <img 
-                          src={assetTransformations?.campaign_aspects?.story_9_16 || activeAsset.cloudinary_url || ''} 
-                          alt="Story 9:16"
-                          onError={(e) => {
-                            if (activeAsset.cloudinary_url && e.currentTarget.src !== activeAsset.cloudinary_url) {
-                              e.currentTarget.src = activeAsset.cloudinary_url;
-                            }
-                          }}
-                          className="w-full h-full object-cover" 
-                        />
-                      </div>
-                      <span className="text-[10px] text-gray-300 font-mono">9:16 Story</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs space-y-1">
-                <p className="font-semibold text-gray-900">Project: {getProjectName(activeAsset.project_id)}</p>
-                {activeAsset.image_latitude != null && activeAsset.image_longitude != null && (
-                  <p className="text-primary-700 font-mono">GPS: {activeAsset.image_latitude.toFixed(5)}N, {activeAsset.image_longitude.toFixed(5)}E ({activeAsset.location_source})</p>
-                )}
-              </div>
-            </div>
-
-            <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-between items-center flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    let urlToCopy = activeAsset.cloudinary_url;
-                    if (modalTab === 'provenance' && assetTransformations?.verified_badge_url) {
-                      urlToCopy = assetTransformations.verified_badge_url;
-                    } else if (modalTab === 'campaign' && assetTransformations?.campaign_aspects?.square_1_1) {
-                      urlToCopy = assetTransformations.campaign_aspects.square_1_1;
-                    } else if (assetTransformations?.optimized_url) {
-                      urlToCopy = assetTransformations.optimized_url;
-                    }
-                    if (urlToCopy) {
-                      navigator.clipboard.writeText(urlToCopy);
-                      setCopiedUrl('lib_modal');
-                      setTimeout(() => setCopiedUrl(null), 2000);
-                    }
-                  }}
-                  className="btn-secondary text-xs flex items-center gap-1.5 py-1 px-3"
-                >
-                  {copiedUrl === 'lib_modal' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copiedUrl === 'lib_modal' ? 'Copied URL!' : 'Copy Transformation URL'}
-                </button>
-                <a 
-                  href={
-                    modalTab === 'provenance'
-                      ? (assetTransformations?.verified_badge_url || activeAsset.cloudinary_url || '')
-                      : modalTab === 'campaign'
-                      ? (assetTransformations?.campaign_aspects?.square_1_1 || activeAsset.cloudinary_url || '')
-                      : (assetTransformations?.optimized_url || activeAsset.cloudinary_url || '')
-                  } 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  className="btn-secondary text-xs flex items-center gap-1 py-1 px-3"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" /> Open HD
-                </a>
-              </div>
-              <button 
-                type="button" 
-                onClick={() => setActiveAsset(null)} 
-                className="btn-primary text-xs py-1 px-4"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isUploadModalOpen && (
-        <UploadMediaModal onClose={() => setIsUploadModalOpen(false)} />
-      )}
-    </div>
+    </Modal>
   );
 }
 
-function UploadMediaModal({ onClose }: { onClose: () => void }) {
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [latitude, setLatitude] = useState<string>('');
-  const [longitude, setLongitude] = useState<string>('');
-  const [isLocating, setIsLocating] = useState(false);
-  const [locationError, setLocationError] = useState<string | null>(null);
-  
-  const uploadMutation = useUploadMedia();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+/* ------------------------------------------------------------------ */
+/* Cloudinary detail                                                   */
+/* ------------------------------------------------------------------ */
 
-  const handleFileSelect = (selectedFile: File) => {
-    setFile(selectedFile);
-    const url = URL.createObjectURL(selectedFile);
-    setPreviewUrl(url);
-  };
+type DetailTab = 'original' | 'provenance' | 'campaign';
 
-  const handleFetchCurrentLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationError('Geolocation is not supported by your browser.');
-      return;
-    }
-    setIsLocating(true);
-    setLocationError(null);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setIsLocating(false);
-        setLatitude(pos.coords.latitude.toFixed(6));
-        setLongitude(pos.coords.longitude.toFixed(6));
-      },
-      (err) => {
-        setIsLocating(false);
-        setLocationError(`Location access denied or unavailable: ${err.message}`);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  };
+function TransformationDialog({
+  asset,
+  onClose,
+}: {
+  asset: MediaAsset | null;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<DetailTab>('original');
+  const { data, isLoading } = useAssetTransformations(asset?.id ?? null);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!file) return;
+  if (!asset) return null;
 
-    const latVal = latitude.trim() ? parseFloat(latitude) : null;
-    const lonVal = longitude.trim() ? parseFloat(longitude) : null;
+  const aspectUrls = data
+    ? [
+        { label: 'Square 1:1', url: data.campaign_aspects.square_1_1 },
+        { label: 'Landscape 16:9', url: data.campaign_aspects.landscape_16_9 },
+        { label: 'Story 9:16', url: data.campaign_aspects.story_9_16 },
+      ]
+    : [];
 
-    uploadMutation.mutate(
-      {
-        file,
-        latitude: latVal,
-        longitude: lonVal,
-      },
-      {
-        onSuccess: () => {
-          onClose();
-        },
-      }
-    );
-  };
+  const current =
+    tab === 'original'
+      ? (data?.optimized_url ?? asset.cloudinary_url)
+      : tab === 'provenance'
+        ? (data?.verified_badge_url ?? asset.cloudinary_url)
+        : (aspectUrls.find((a) => a.label === 'Square 1:1')?.url ?? asset.cloudinary_url);
 
   return (
-    <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-gray-100" onClick={e => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Upload Field Media</h2>
-            <p className="text-xs text-gray-500">With automatic or custom Geo-Tagging</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100">
-            <X className="w-5 h-5" />
+    <Modal
+      open
+      onClose={onClose}
+      title="Delivery transformations"
+      width="max-w-3xl"
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="btn btn-secondary">
+            Close
           </button>
+          {current && (
+            <a
+              href={current}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-primary"
+            >
+              <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+              Open delivery URL
+            </a>
+          )}
+        </>
+      }
+    >
+      <div className="px-4 pt-3">
+        <SegmentedControl<DetailTab>
+          ariaLabel="Transformation view"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'original', label: 'Optimised' },
+            { value: 'provenance', label: 'Provenance' },
+            { value: 'campaign', label: 'Campaign' },
+          ]}
+        />
+      </div>
+
+      <div className="p-4 space-y-4">
+        <div className="panel-sunken aspect-[16/9] flex items-center justify-center overflow-hidden">
+          {isLoading ? (
+            <Skeleton className="w-full h-full" />
+          ) : current ? (
+            <img
+              src={current}
+              alt={`${tab} delivery transformation`}
+              className="max-h-full max-w-full object-contain"
+            />
+          ) : (
+            <span className="meta">no delivery URL available</span>
+          )}
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          {/* File Selector */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Select Photo</label>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              className="hidden" 
-              accept="image/*"
-              onChange={(e) => {
-                if (e.target.files && e.target.files[0]) {
-                  handleFileSelect(e.target.files[0]);
-                }
-              }}
-            />
-
-            {!file ? (
-              <div 
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-gray-300 hover:border-primary-500 rounded-lg p-6 text-center cursor-pointer transition-colors bg-gray-50 hover:bg-primary-50/20"
-              >
-                <UploadCloud className="w-10 h-10 text-gray-400 mx-auto mb-2" />
-                <p className="text-sm font-medium text-gray-700">Click to choose a photo</p>
-                <p className="text-xs text-gray-400 mt-1">Supports JPG, PNG, WEBP</p>
-              </div>
-            ) : (
-              <div className="relative border border-gray-200 rounded-lg p-3 flex items-center gap-3 bg-gray-50">
-                {previewUrl && (
-                  <img src={previewUrl} alt="Preview" className="w-16 h-16 object-cover rounded border border-gray-200 flex-shrink-0" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
-                </div>
-                <button 
-                  type="button" 
-                  onClick={() => {
-                    setFile(null);
-                    setPreviewUrl(null);
-                  }}
-                  className="text-xs text-red-600 hover:underline px-2 py-1"
+        {tab === 'campaign' && aspectUrls.length > 0 && (
+          <ul className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {aspectUrls.map((aspect) => (
+              <li key={aspect.label}>
+                <a
+                  href={aspect.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block panel overflow-hidden hover:border-brand-300 transition-colors"
                 >
-                  Change
-                </button>
-              </div>
-            )}
+                  <div className="aspect-square bg-sunken">
+                    <img
+                      src={aspect.url}
+                      alt={`${aspect.label} campaign export`}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="px-2.5 py-2 rule-t flex items-center gap-1.5">
+                    <Crop className="w-3 h-3 text-ink-3" aria-hidden="true" />
+                    <span className="label">{aspect.label}</span>
+                  </div>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {current && (
+          <div>
+            <span className="label">Delivery URL</span>
+            <code className="block mt-1.5 p-2.5 panel-sunken text-[10.5px] leading-relaxed break-all text-ink-2">
+              {current}
+            </code>
           </div>
+        )}
 
-          {/* Geo-Tagging Section */}
-          <div className="border-t border-gray-100 pt-4">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
-                <MapPin className="w-4 h-4 text-primary-600" />
-                Geotag / GPS Coordinates
-              </label>
-              <button
-                type="button"
-                onClick={handleFetchCurrentLocation}
-                disabled={isLocating}
-                className="text-xs font-medium text-primary-600 hover:text-primary-700 flex items-center gap-1 px-2 py-1 bg-primary-50 hover:bg-primary-100 rounded transition-colors"
-              >
-                {isLocating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Navigation className="w-3.5 h-3.5" />}
-                {isLocating ? 'Locating...' : 'Use My GPS'}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Latitude</label>
-                <input 
-                  type="number" 
-                  step="any"
-                  value={latitude}
-                  onChange={e => setLatitude(e.target.value)}
-                  placeholder="e.g. 28.6010"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm font-mono"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Longitude</label>
-                <input 
-                  type="number" 
-                  step="any"
-                  value={longitude}
-                  onChange={e => setLongitude(e.target.value)}
-                  placeholder="e.g. 77.2990"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm font-mono"
-                />
-              </div>
-            </div>
-
-            {locationError && (
-              <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
-                <AlertCircle className="w-3.5 h-3.5" />
-                {locationError}
-              </p>
-            )}
-
-            <p className="text-[11px] text-gray-400 mt-2">
-              💡 <em>Leave blank to auto-extract GPS coordinates from image EXIF metadata (camera/phone photos).</em>
-            </p>
-          </div>
-
-          {uploadMutation.isError && (
-            <div className="p-3 bg-red-50 text-red-700 text-xs rounded-md">
-              Failed to upload media. Please check your network and try again.
-            </div>
-          )}
-
-          {/* Action Buttons */}
-          <div className="border-t border-gray-100 pt-4 flex justify-end gap-3">
-            <button 
-              type="button" 
-              onClick={onClose}
-              className="btn-secondary text-sm"
-              disabled={uploadMutation.isPending}
-            >
-              Cancel
-            </button>
-            <button 
-              type="submit" 
-              className="btn-primary text-sm flex items-center justify-center min-w-[140px]"
-              disabled={uploadMutation.isPending || !file}
-            >
-              {uploadMutation.isPending ? (
-                <span className="flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Uploading...
-                </span>
-              ) : (
-                'Upload & Route'
-              )}
-            </button>
-          </div>
-        </form>
+        {data && (
+          <p className="flex items-start gap-1.5 text-[11.5px] text-ink-3">
+            <Layers className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden="true" />
+            <span>
+              Variants are produced by Cloudinary URL transformation. Format and quality are
+              negotiated per request with <span className="value">f_auto,q_auto</span>; crops use the
+              detected focal point via <span className="value">g_auto</span>.
+            </span>
+          </p>
+        )}
       </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Page                                                                */
+/* ------------------------------------------------------------------ */
+
+export default function MediaLibrary() {
+  const { data: media, isLoading, error, refetch } = useMediaLibrary();
+  const { data: projects } = useProjects();
+  const deleteMutation = useDeleteMedia();
+  const syncMutation = useSyncAllCloudinaryMetadata();
+  const queryClient = useQueryClient();
+
+  const [filter, setFilter] = useState<Filter>('all');
+  const [projectFilter, setProjectFilter] = useState('');
+  const [query, setQuery] = useState('');
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [detail, setDetail] = useState<MediaAsset | null>(null);
+  const [view, setView] = useState<'grid' | 'table'>('grid');
+
+  const uploadMutation = useUploadMedia();
+  const signature = useUploadSignature(uploadOpen);
+  const [directResult, setDirectResult] = useState<string | null>(null);
+  const [directError, setDirectError] = useState<string | null>(null);
+
+  /**
+   * Direct CDN upload, with the proxied path as the fallback.
+   *
+   * A direct upload does not create an asset record on its own: the asset is
+   * created by the backend's upload webhook. So this reports "the bytes landed"
+   * and leaves the pipeline polling to pick up the new asset, rather than
+   * pretending the asset is ready.
+   */
+  const directUpload = useMutation({
+    mutationFn: async (file: File) => {
+      if (!signature.data) throw new Error('No upload signature available');
+      const result = await directUploadToCdn(signature.data, file);
+      return result;
+    },
+    onSuccess: (result) => {
+      setDirectError(null);
+      setDirectResult(
+        `Sent to the CDN (${Math.round(result.bytes / 1024)} kB). The asset appears once the upload webhook has processed it.`,
+      );
+      queryClient.invalidateQueries({ queryKey: ['media'] });
+    },
+    onError: (error: Error) => {
+      setDirectResult(null);
+      setDirectError(error.message);
+    },
+  });
+
+  // Lookup map rather than a find() helper, so the memo below has a stable
+  // dependency and does not re-derive names on every keystroke.
+  const nameByProject = useMemo(
+    () => new Map((projects ?? []).map((p) => [p.id, p.name])),
+    [projects],
+  );
+  const projectName = (id: string | null) => (id ? (nameByProject.get(id) ?? 'unknown') : null);
+
+  const rows = useMemo(() => {
+    let list = media ?? [];
+    if (filter === 'exceptions') list = list.filter((a) => statusOf(a).needsHuman);
+    if (filter === 'ready') list = list.filter((a) => a.processing_status === 'READY');
+    if (filter === 'geo') list = list.filter((a) => a.image_latitude != null);
+    if (projectFilter) list = list.filter((a) => a.project_id === projectFilter);
+
+    const q = query.trim().toLowerCase();
+    if (q) {
+      list = list.filter((a) => {
+        const haystack = [
+          a.description,
+          a.activity,
+          a.scene,
+          a.project_id ? nameByProject.get(a.project_id) : null,
+        ];
+        return haystack.some((v) => v?.toLowerCase().includes(q));
+      });
+    }
+    return [...list].sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at));
+  }, [media, filter, projectFilter, query, nameByProject]);
+
+  const total = media?.length ?? 0;
+
+  return (
+    <div className="p-4 lg:p-6 space-y-4">
+      {/* Control bar */}
+      <div className="panel p-3 flex flex-col xl:flex-row xl:items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+          <SegmentedControl<Filter>
+            ariaLabel="Filter captures"
+            size="sm"
+            value={filter}
+            onChange={setFilter}
+            options={FILTERS}
+          />
+
+          <label htmlFor="media-project" className="sr-only">
+            Filter by project
+          </label>
+          <select
+            id="media-project"
+            value={projectFilter}
+            onChange={(e) => setProjectFilter(e.target.value)}
+            className="field field-sm w-auto min-w-[150px]"
+          >
+            <option value="">All projects</option>
+            {projects?.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+
+          <label htmlFor="media-search" className="sr-only">
+            Search captures
+          </label>
+          <input
+            id="media-search"
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search descriptions"
+            className="field field-sm w-auto min-w-[180px] flex-1"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className="meta">
+            {rows.length} of {total}
+          </span>
+          {/* Two representations of the same set. Photographs are reviewed as
+              images; audits and handovers are read as numbers. Forcing one
+              layout makes one of those two jobs worse. */}
+          <SegmentedControl<'grid' | 'table'>
+            ariaLabel="Result layout"
+            size="sm"
+            value={view}
+            onChange={setView}
+            options={[
+              { value: 'grid', label: 'Grid' },
+              { value: 'table', label: 'Table' },
+            ]}
+          />
+          <button
+            type="button"
+            onClick={() => syncMutation.mutate()}
+            disabled={syncMutation.isPending}
+            className="btn btn-sm btn-secondary"
+            title="Write evidence metadata back to Cloudinary context and tags"
+          >
+            <RefreshCw
+              className={syncMutation.isPending ? 'w-3 h-3 animate-spin' : 'w-3 h-3'}
+              aria-hidden="true"
+            />
+            {syncMutation.isPending ? 'Syncing' : 'Sync CDN'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setUploadOpen(true)}
+            className="btn btn-sm btn-primary"
+          >
+            <Upload className="w-3 h-3" aria-hidden="true" />
+            Ingest
+          </button>
+        </div>
+      </div>
+
+      {syncMutation.isSuccess && syncMutation.data && (
+        <div
+          role="status"
+          className="panel border-ok-100 bg-ok-50 px-3 py-2 flex items-center gap-2 flex-wrap"
+        >
+          <span className="text-[12px] text-ok-700">
+            Cloudinary context and tags rewritten for {syncMutation.data.synced_count} of{' '}
+            {syncMutation.data.total_assets} assets.
+          </span>
+          <button
+            type="button"
+            onClick={() => syncMutation.reset()}
+            aria-label="Dismiss sync summary"
+            className="btn btn-icon btn-ghost ml-auto -mr-1 text-ok-700"
+          >
+            <X className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+
+      {uploadMutation.isError && (
+        <div
+          role="alert"
+          className="panel border-danger-100 bg-danger-50 px-3 py-2 flex items-start gap-2"
+        >
+          <span className="text-[12px] text-danger-700">
+            The API server rejected the upload. Check that the backend is reachable, or retry
+            through the CDN path.
+          </span>
+        </div>
+      )}
+
+      {directError && (
+        <div
+          role="alert"
+          className="panel border-danger-100 bg-danger-50 px-3 py-2 flex items-start gap-2"
+        >
+          <span className="text-[12px] text-danger-700 break-words">
+            Direct upload failed: {directError}
+          </span>
+          <button
+            type="button"
+            onClick={() => setDirectError(null)}
+            aria-label="Dismiss upload error"
+            className="btn btn-icon btn-ghost ml-auto -mr-1 text-danger-700"
+          >
+            <X className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+
+      {directResult && (
+        <div
+          role="status"
+          className="panel border-ok-100 bg-ok-50 px-3 py-2 flex items-center gap-2 flex-wrap"
+        >
+          <span className="text-[12px] text-ok-700">{directResult}</span>
+          <button
+            type="button"
+            onClick={() => setDirectResult(null)}
+            aria-label="Dismiss upload summary"
+            className="btn btn-icon btn-ghost ml-auto -mr-1 text-ok-700"
+          >
+            <X className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+
+      {isLoading ? (
+        view === 'grid' ? (
+          <SkeletonCards count={8} />
+        ) : (
+          <div className="panel" aria-busy="true" aria-label="Loading media">
+            <div className="px-4 py-2.5 rule-b">
+              <Skeleton className="h-2.5 w-32" />
+            </div>
+            <SkeletonRows rows={8} />
+          </div>
+        )
+      ) : error ? (
+        <ErrorState
+          title="Media library unavailable"
+          detail="The media request failed."
+          onRetry={() => void refetch()}
+        />
+      ) : rows.length === 0 ? (
+        <div className="panel">
+          <EmptyState
+            icon={Images}
+            title={total === 0 ? 'Corpus is empty' : 'No capture matches'}
+            description={
+              total === 0
+                ? 'Ingest a field photograph to start visual analysis, geographic routing and vector indexing.'
+                : 'Adjust the filters or clear the search to see the rest of the corpus.'
+            }
+            action={
+              total === 0 ? (
+                <button type="button" onClick={() => setUploadOpen(true)} className="btn btn-primary">
+                  <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                  Ingest capture
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilter('all');
+                    setProjectFilter('');
+                    setQuery('');
+                  }}
+                  className="btn btn-secondary"
+                >
+                  Reset filters
+                </button>
+              )
+            }
+          />
+        </div>
+      ) : view === 'grid' ? (
+        <ul className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+          {rows.map((asset) => {
+            const status = statusOf(asset);
+            return (
+              <li key={asset.id} className="panel group flex flex-col">
+                <button
+                  type="button"
+                  onClick={() => setDetail(asset)}
+                  aria-label={`Open delivery transformations for capture ${asset.id}`}
+                  className="relative block aspect-[4/3] bg-sunken overflow-hidden text-left"
+                >
+                  {asset.cloudinary_url ? (
+                    <img
+                      src={asset.cloudinary_url}
+                      alt={asset.description ?? 'Field capture'}
+                      loading="lazy"
+                      decoding="async"
+                      className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                    />
+                  ) : (
+                    <span className="absolute inset-0 flex items-center justify-center">
+                      <Images className="w-5 h-5 text-ink-3" aria-hidden="true" />
+                    </span>
+                  )}
+                  <span className="absolute top-1.5 left-1.5">
+                    <Chip className={status.chip}>{status.label}</Chip>
+                  </span>
+                </button>
+
+                <div className="p-2.5 flex-1 flex flex-col gap-1.5">
+                  <p className="text-[12px] text-ink leading-snug line-clamp-2 min-h-[2.1em]">
+                    {asset.description || humanizeToken(asset.activity) || 'Awaiting analysis'}
+                  </p>
+                  <p className="meta truncate">{projectName(asset.project_id) ?? 'unassigned'}</p>
+                  <div className="flex items-center justify-between gap-2 mt-auto pt-1">
+                    <Coordinate lat={asset.image_latitude} lng={asset.image_longitude} />
+                    <span className="meta">{relativeTime(asset.uploaded_at)}</span>
+                  </div>
+                  <div className="flex items-center gap-1 pt-1.5 rule-t mt-1">
+                    <AssetId id={asset.id} className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => deleteMutation.mutate(asset.id)}
+                      disabled={deleteMutation.isPending}
+                      aria-label={`Delete capture ${asset.id}`}
+                      className="btn btn-icon btn-ghost text-ink-3 hover:text-danger-600 hover:bg-danger-50"
+                    >
+                      <X className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        /* Dense table. Same data, ordered for auditing: position, offset from
+           anchor, confidence, recency. This is the layout a reviewer exports
+           from, and it fits 3x more rows on the same screen. */
+        <div className="panel overflow-x-auto">
+          <table className="w-full min-w-[860px] text-left border-collapse">
+            <caption className="sr-only">Captures with position, anchor offset and confidence</caption>
+            <thead>
+              <tr className="rule-b">
+                <th scope="col" className="label px-3 py-2.5 w-[54px]">
+                  <span className="sr-only">Preview</span>
+                </th>
+                <th scope="col" className="label px-2 py-2.5">Capture</th>
+                <th scope="col" className="label px-2 py-2.5">State</th>
+                <th scope="col" className="label px-2 py-2.5">Project</th>
+                <th scope="col" className="label px-2 py-2.5 w-[136px]">Position</th>
+                <th scope="col" className="label px-2 py-2.5 w-[80px] text-right">Offset</th>
+                <th scope="col" className="label px-2 py-2.5 w-[104px]">Confidence</th>
+                <th scope="col" className="label px-2 py-2.5 w-[88px] text-right">Ingested</th>
+                <th scope="col" className="label px-2 py-2.5 w-[44px]">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((asset) => {
+                const status = statusOf(asset);
+                return (
+                  <tr key={asset.id} className="rule-b last:border-b-0 row-hover group">
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setDetail(asset)}
+                        aria-label={`Open transformations for ${asset.id}`}
+                        className="block w-9 h-9 bg-sunken border border-line overflow-hidden"
+                      >
+                        {asset.cloudinary_url && (
+                          <img
+                            src={asset.cloudinary_url}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            className="w-full h-full object-cover"
+                          />
+                        )}
+                      </button>
+                    </td>
+                    <td className="px-2 py-2 max-w-[320px]">
+                      <p className="text-[12px] text-ink truncate">
+                        {asset.description || humanizeToken(asset.activity) || 'Awaiting analysis'}
+                      </p>
+                      <AssetId id={asset.id} />
+                    </td>
+                    <td className="px-2 py-2">
+                      <Chip className={status.chip}>{status.label}</Chip>
+                    </td>
+                    <td className="px-2 py-2 max-w-[180px]">
+                      <span className="text-[12px] text-ink-2 truncate block">
+                        {projectName(asset.project_id) ?? 'unassigned'}
+                      </span>
+                    </td>
+                    <td className="px-2 py-2">
+                      <Coordinate lat={asset.image_latitude} lng={asset.image_longitude} />
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      <span className="value text-[12px]">
+                        {asset.location_match_distance != null
+                          ? `${asset.location_match_distance.toFixed(2)}`
+                          : '--'}
+                      </span>
+                      {asset.location_match_distance != null && (
+                        <span className="label ml-0.5">km</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-2">
+                      <ScoreReadout score={asset.routing_confidence} />
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      <span className="meta">{relativeTime(asset.uploaded_at)}</span>
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => deleteMutation.mutate(asset.id)}
+                        disabled={deleteMutation.isPending}
+                        aria-label={`Delete capture ${asset.id}`}
+                        className="btn btn-icon btn-ghost text-ink-3 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-danger-600"
+                      >
+                        <X className="w-3.5 h-3.5" aria-hidden="true" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <UploadDialog
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        pending={uploadMutation.isPending}
+        directPending={directUpload.isPending}
+        signatureUnavailable={!signature.data}
+        onUpload={(file, lat, lng) => {
+          uploadMutation.mutate(
+            lat != null && lng != null ? { file, latitude: lat, longitude: lng } : file,
+            { onSuccess: () => setUploadOpen(false) },
+          );
+        }}
+        onDirectUpload={(file) => {
+          directUpload.mutate(file, { onSuccess: () => setUploadOpen(false) });
+        }}
+      />
+
+      <TransformationDialog asset={detail} onClose={() => setDetail(null)} />
     </div>
   );
 }

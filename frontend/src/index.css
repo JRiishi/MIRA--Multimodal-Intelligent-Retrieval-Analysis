@@ -1,28 +1,459 @@
 @import "tailwindcss";
 
+/*
+ * ============================================================================
+ * MIRA DESIGN SYSTEM
+ * ============================================================================
+ *
+ * Direction: "field instrument". The product is a survey/audit tool used to
+ * decide whether a photograph belongs to a project. The interface is therefore
+ * built like measuring equipment rather than a marketing site: hairline rules
+ * instead of shadows, monospace for every value, dense readouts, and one
+ * accent colour reserved for states that need a human.
+ *
+ * Deliberately NOT used: sky blue, indigo/violet, AI-purple, cream+brass
+ * premium palettes, gradient meshes, glassmorphism.
+ *
+ * Theme is locked light (cool canvas) with a single dark instrument rail.
+ * Not shipping a second theme: this is print-adjacent audit tooling where
+ * screenshots and reports must read identically for everyone.
+ *
+ * Tailwind v4 is CSS-first; there is no tailwind.config.js by design.
+ */
+
 @theme {
-  --color-primary-50: #f0f9ff;
-  --color-primary-100: #e0f2fe;
-  --color-primary-500: #0ea5e9;
-  --color-primary-600: #0284c7;
-  --color-primary-700: #0369a1;
-  --color-primary-900: #0c4a6e;
+  /* --- Neutrals: cool graphite, not warm paper, not pure black/white --- */
+  --color-canvas: #eceff2;
+  --color-surface: #ffffff;
+  --color-sunken: #e3e7eb;
+  --color-line: #d2d8de;
+  --color-line-strong: #b6bfc8;
+
+  --color-ink: #0e1319;
+  --color-ink-2: #414b56;
+  /* Smallest text in the system is 10.5px, so ink-3 must clear 4.5:1 against
+     the darkest surface it ever sits on (--color-sunken), not just white.
+     Verified: 5.77 on white, 4.64 on sunken, 5.00 on canvas. */
+  --color-ink-3: #5c6772;
+
+  /* --- Brand: deep petrol. Structural only. --- */
+  --color-brand-50: #eef6f5;
+  --color-brand-100: #d3e8e6;
+  --color-brand-200: #a8d1ce;
+  --color-brand-300: #6fb3ae;
+  --color-brand-400: #3d918c;
+  --color-brand-500: #1f7771;
+  --color-brand-600: #0e5c57;
+  --color-brand-700: #0a4743;
+  --color-brand-800: #07332f;
+  --color-brand-900: #05221f;
+
+  /* --- Signal: the single accent. AI + anything needing a human. --- */
+  --color-signal-50: #fdf3ea;
+  --color-signal-100: #fae3cd;
+  --color-signal-200: #f3c79c;
+  --color-signal-300: #e9a663;
+  --color-signal-400: #dd8135;
+  --color-signal-500: #c2651a;
+  --color-signal-600: #a54e12;
+  --color-signal-700: #833c10;
+  --color-signal-800: #5f2c10;
+  --color-signal-900: #3f1e0d;
+
+  /* --- Functional status. Desaturated so they read as data, not decoration. */
+  --color-ok-50: #eef4ee;
+  --color-ok-100: #d6e5d7;
+  --color-ok-500: #4a7c50;
+  --color-ok-600: #3a6440;
+  --color-ok-700: #2b4c30;
+  --color-danger-50: #fbeeed;
+  --color-danger-100: #f5d5d3;
+  --color-danger-500: #a3453f;
+  --color-danger-600: #8a3732;
+  --color-danger-700: #6b2a26;
+  --color-caution-50: #fbf4e3;
+  --color-caution-100: #f4e4bb;
+  --color-caution-500: #9c7418;
+  --color-caution-600: #7d5c11;
+  --color-caution-700: #5e440c;
+
+  /* --- Rail: the dark instrument bezel --- */
+  --color-rail: #12171c;
+  --color-rail-2: #1c232a;
+  --color-rail-3: #2a333c;
+  --color-rail-ink: #e8edf2;
+  --color-rail-ink-2: #97a3b0;
+
+  /*
+   * Typography.
+   * `label` uses Bahnschrift / DIN Alternate: a condensed industrial grotesk
+   * that ships with Windows. It is the signature of the interface and is used
+   * only for uppercase micro-labels and tabular readouts, never for prose.
+   * `mono` is used for every identifier, coordinate, score and timestamp.
+   */
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", ui-monospace, "Segoe UI Mono", Consolas, "SF Mono", Menlo, monospace;
+  --font-label: "Bahnschrift", "DIN Alternate", "Segoe UI Semibold", ui-sans-serif, system-ui, sans-serif;
+
+  /* --- Radius: one disciplined scale. --- */
+  --radius-control: 2px;
+  --radius-panel: 3px;
+
+  /* --- Elevation: barely there. Overlays only. --- */
+  --shadow-overlay: 0 1px 2px rgb(14 19 25 / 0.06), 0 12px 28px -8px rgb(14 19 25 / 0.18);
+  --shadow-pop: 0 1px 2px rgb(14 19 25 / 0.08), 0 24px 48px -12px rgb(14 19 25 / 0.28);
+
+  --z-rail: 20;
+  --z-strip: 30;
+  --z-drawer: 40;
+  --z-overlay: 50;
+
+  /*
+   * Motion tokens.
+   * Two curves only: `enter` for elements arriving, `exit` for elements
+   * leaving, and `spring` for anything responding to a direct manipulation.
+   * Durations are deliberately short. This tool is used in long sessions and
+   * slow animation compounds into fatigue.
+   */
+  --motion-fast: 90ms;
+  --motion-base: 160ms;
+  --motion-slow: 280ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
 }
 
 @layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
-    @apply bg-gray-50 text-gray-900 font-sans antialiased;
+    @apply bg-canvas text-ink font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "tnum";
+  }
+
+  /* Every number, coordinate, score and id is monospace and tabular. */
+  code,
+  kbd,
+  samp,
+  pre,
+  time,
+  .tnum {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-1 outline-brand-600;
+  }
+
+  ::selection {
+    @apply bg-brand-600 text-white;
+  }
+
+  /* Scrollbars that belong to the instrument, not the OS. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-3);
+    background-clip: content-box;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Non-essential motion is opt-in so the reduced-motion block above can
+     collapse it without touching state styling. */
+  @media (prefers-reduced-motion: no-preference) {
+    .anim-enter {
+      animation: mira-enter var(--motion-slow) var(--ease-enter) both;
+    }
+    .anim-shimmer::after {
+      animation: mira-shimmer 1.6s var(--ease-enter) infinite;
+    }
+    .anim-pulse-soft {
+      animation: mira-pulse 2.4s var(--ease-enter) infinite;
+    }
+  }
+}
+
+/*
+ * Ambient field fallback.
+ *
+ * The WebGL canvas paints over this when it is available. This layer is what
+ * remains under `prefers-reduced-motion: reduce` and when WebGL2 is missing,
+ * so the workspace never falls back to a flat fill.
+ */
+.ambient-fallback {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      120% 90% at 78% 8%,
+      color-mix(in oklab, var(--color-brand-200) 34%, transparent) 0%,
+      transparent 62%
+    ),
+    radial-gradient(
+      90% 70% at 8% 96%,
+      color-mix(in oklab, var(--color-sky-200) 26%, transparent) 0%,
+      transparent 58%
+    ),
+    linear-gradient(168deg, var(--color-canvas) 0%, var(--color-sunken) 100%);
+}
+
+@keyframes mira-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes mira-shimmer {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    transform: translate3d(100%, 0, 0);
+  }
+}
+
+@keyframes mira-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes mira-indeterminate {
+  0% {
+    transform: translate3d(-100%, 0, 0) scaleX(0.3);
+  }
+  50% {
+    transform: translate3d(0, 0, 0) scaleX(0.6);
+  }
+  100% {
+    transform: translate3d(100%, 0, 0) scaleX(0.3);
   }
 }
 
 @layer components {
+  /*
+   * Composition rule
+   * -----------------
+   * Tailwind v4 cannot `@apply` a custom component class, so a base class is
+   * never applied by its variants. Markup always lists base + variant, e.g.
+   * `class="btn btn-primary"`, `class="chip chip-ok"`, `class="field field-sm"`.
+   */
+
+  /* ---------------------------------------------------------------- */
+  /* Surfaces                                                          */
+  /* ---------------------------------------------------------------- */
+  /* Elevation is expressed with a hairline border, not a shadow. */
+  .panel {
+    @apply bg-surface border border-line rounded-[var(--radius-panel)];
+  }
+  .panel-sunken {
+    @apply bg-sunken border border-line rounded-[var(--radius-panel)];
+  }
+  .panel-rail {
+    @apply bg-rail border border-rail-3 rounded-[var(--radius-panel)];
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Micro-labels                                                     */
+  /* ---------------------------------------------------------------- */
+  /* Functional table headers and field labels. Not decorative eyebrows. */
+  .label {
+    @apply font-label uppercase tracking-[0.14em] text-ink-3 text-[10.5px] leading-none;
+  }
+  /* Self-contained: the only label variant, so it does not compose. */
+  .label-strong {
+    @apply font-label uppercase tracking-[0.14em] text-ink-2 text-[10.5px] leading-none font-semibold;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Data readouts                                                    */
+  /* ---------------------------------------------------------------- */
+  .value {
+    @apply font-mono tabular-nums text-ink;
+  }
+  .meta {
+    @apply font-mono text-[11px] text-ink-3 tabular-nums;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Buttons                                                          */
+  /* ---------------------------------------------------------------- */
+  /* Tactile push on :active. Single line, never wrapping. */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 whitespace-nowrap
+           font-medium text-[13px] leading-none
+           px-3 py-2 rounded-[var(--radius-control)]
+           border border-transparent
+           transition-[background-color,border-color,color,transform] duration-100
+           active:translate-y-px
+           disabled:opacity-45 disabled:pointer-events-none;
+  }
   .btn-primary {
-    @apply bg-primary-600 text-white px-4 py-2 rounded-md font-medium hover:bg-primary-700 transition-colors shadow-sm;
+    @apply bg-brand-600 text-white border-brand-700 hover:bg-brand-500;
+  }
+  .btn-signal {
+    @apply bg-signal-600 text-white border-signal-700 hover:bg-signal-500;
   }
   .btn-secondary {
-    @apply bg-white text-gray-700 border border-gray-200 px-4 py-2 rounded-md font-medium hover:bg-gray-50 transition-colors shadow-sm;
+    @apply bg-surface text-ink-2 border-line-strong hover:bg-sunken hover:text-ink;
   }
-  .card {
-    @apply bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden;
+  .btn-ghost {
+    @apply bg-transparent text-ink-2 hover:bg-sunken hover:text-ink;
+  }
+  .btn-danger {
+    @apply bg-surface text-danger-600 border-danger-100 hover:bg-danger-50;
+  }
+  .btn-sm {
+    @apply px-2 py-1.5 text-[11px];
+  }
+  .btn-icon {
+    @apply px-2 py-2;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Chips: real semantic state only, never decoration                 */
+  /* ---------------------------------------------------------------- */
+  .chip {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap
+           font-mono text-[10.5px] uppercase tracking-[0.1em] leading-none
+           px-1.5 py-1 rounded-[var(--radius-control)]
+           border bg-sunken text-ink-2 border-line;
+  }
+  .chip-ok {
+    @apply bg-ok-50 text-ok-700 border-ok-100;
+  }
+  .chip-signal {
+    @apply bg-signal-50 text-signal-700 border-signal-100;
+  }
+  .chip-caution {
+    @apply bg-caution-50 text-caution-700 border-caution-100;
+  }
+  .chip-danger {
+    @apply bg-danger-50 text-danger-700 border-danger-100;
+  }
+  .chip-brand {
+    @apply bg-brand-50 text-brand-700 border-brand-100;
+  }
+  .chip-rail {
+    @apply bg-rail-3 text-rail-ink border-rail-3;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Form controls                                                    */
+  /* ---------------------------------------------------------------- */
+  .field {
+    @apply w-full bg-surface text-[13px] text-ink
+           border border-line-strong rounded-[var(--radius-control)]
+           px-2.5 py-2
+           placeholder:text-ink-3
+           transition-[border-color,box-shadow] duration-100
+           focus:outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-600/15
+           disabled:bg-sunken disabled:text-ink-3;
+  }
+  .field-sm {
+    @apply px-2 py-1.5 text-[12px];
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Layout helpers                                                   */
+  /* ---------------------------------------------------------------- */
+  .rule-t {
+    @apply border-t border-line;
+  }
+  .rule-b {
+    @apply border-b border-line;
+  }
+  .row-hover {
+    @apply transition-colors duration-100 hover:bg-brand-50/50;
+  }
+
+  /* Skip link */
+  .skip-link {
+    @apply sr-only;
+  }
+  .skip-link:focus {
+    @apply not-sr-only fixed top-2 left-2 z-[60] px-3 py-2
+           bg-rail text-white text-[13px] rounded-[var(--radius-control)];
+  }
+}
+
+/* ========================================================================== */
+/* Print: the Reports view is an audit document, not a screenshot.           */
+/* ========================================================================== */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  .print-reset {
+    padding: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  .panel,
+  .panel-sunken {
+    border-color: #b6bfc8 !important;
+    background: #fff !important;
+  }
+
+  section,
+  figure,
+  li,
+  tr {
+    break-inside: avoid;
+  }
+
+  img {
+    max-width: 100% !important;
+  }
+
+  /* Show link targets so a printed audit trail is self-contained. */
+  .print-url::after {
+    content: " (" attr(href) ")";
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--color-ink-2);
   }
 }

@@ -18,7 +18,47 @@ export interface ProjectCreate {
   location_name?: string | null;
 }
 
-export type ProcessingStatus = 'QUEUED' | 'UPLOADING' | 'ANALYZING' | 'ROUTING' | 'INDEXING' | 'READY' | 'NEEDS_REVIEW' | 'FAILED' | 'UNASSIGNED';
+/**
+ * Every value the backend actually writes to `media_assets.processing_status`.
+ *
+ * NOTE: this is deliberately wider than the `ProcessingStatus` Pydantic enum in
+ * `backend/app/schemas/media.py`, which is out of sync with the pipeline code.
+ * The real writers are:
+ *   models/media.py:15   UPLOADED   (column default)
+ *   api/media.py:234,624 QUEUED
+ *   api/media.py:35     UPLOADING
+ *   api/media.py:61     ANALYZING
+ *   api/media.py:69     ROUTING
+ *   api/media.py:89     INDEXING
+ *   api/media.py:203,340 READY
+ *   api/media.py:91     NEEDS_REVIEW
+ *   api/media.py:93     UNASSIGNED
+ *   api/projects.py:79  UNASSIGNED
+ *   api/media.py:55,213 FAILED
+ *
+ * `GET /media/` returns the raw DB string, not the Pydantic enum, so all of
+ * these can reach the UI. Terminal states (no further pipeline progress):
+ * READY, FAILED, NEEDS_REVIEW, UNASSIGNED.
+ */
+export type ProcessingStatus =
+  | 'UPLOADED'
+  | 'QUEUED'
+  | 'UPLOADING'
+  | 'ANALYZING'
+  | 'ROUTING'
+  | 'INDEXING'
+  | 'READY'
+  | 'NEEDS_REVIEW'
+  | 'UNASSIGNED'
+  | 'FAILED';
+
+/** Statuses after which the pipeline makes no further progress. */
+export const TERMINAL_STATUSES: readonly ProcessingStatus[] = [
+  'READY',
+  'FAILED',
+  'NEEDS_REVIEW',
+  'UNASSIGNED',
+];
 
 export interface MediaAsset {
   id: string;
