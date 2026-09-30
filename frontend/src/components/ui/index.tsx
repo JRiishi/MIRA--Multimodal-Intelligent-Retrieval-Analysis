@@ -433,18 +433,33 @@ export function Modal({
   const closeRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const restoreRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
     restoreRef.current = document.activeElement as HTMLElement;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    closeRef.current?.focus();
+
+    // Focus first input on open, or close button if no inputs present
+    const timer = setTimeout(() => {
+      if (panelRef.current) {
+        const firstInput = panelRef.current.querySelector<HTMLElement>(
+          'input:not([disabled]), textarea:not([disabled]), select:not([disabled])'
+        );
+        if (firstInput) {
+          firstInput.focus();
+        } else {
+          closeRef.current?.focus();
+        }
+      }
+    }, 40);
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
-        onClose();
+        onCloseRef.current?.();
         return;
       }
       // Contain focus inside the dialog.
@@ -466,11 +481,12 @@ export function Modal({
 
     document.addEventListener('keydown', onKeyDown);
     return () => {
+      clearTimeout(timer);
       document.removeEventListener('keydown', onKeyDown);
       document.body.style.overflow = previousOverflow;
       restoreRef.current?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

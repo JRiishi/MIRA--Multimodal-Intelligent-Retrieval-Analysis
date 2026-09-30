@@ -23,8 +23,15 @@ def classify_intent(message: str) -> str:
     """Classify the user query into a project intelligence workflow."""
     msg = message.lower().strip()
     
-    # 0. Greetings & Small Talk
-    if re.search(r'^(hi|hello|hey|greetings|howdy|good\s+(morning|afternoon|evening)|how\s+are\s+you|who\s+are\s+you|what\s+can\s+you\s+do|what\s+is\s+your\s+name|help|thanks|thank\s+you)[\s.?!]*$', msg):
+    # 0. Greetings, Pleasantries & Small Talk (compound greetings, check-ins, courtesies)
+    greeting_pattern = (
+        r'^(hi|hello|hey|heyy|howdy|greetings|good\s+(morning|afternoon|evening|day))'
+        r'([\s,!.?]+(how\s+are\s+you|how\s+are\s+you\s+doing|how\s+is\s+it\s+going|there|mira|bot|assistant|all))?[\s.?!]*$'
+    )
+    chitchat_pattern = (
+        r'^(how\s+are\s+you|how\s+are\s+you\s+doing|how\s+is\s+it\s+going|who\s+are\s+you|what\s+can\s+you\s+do|what\s+is\s+your\s+name|help|thanks|thank\s+you|thx|nice\s+to\s+meet\s+you)[\s.?!]*$'
+    )
+    if re.search(greeting_pattern, msg) or re.search(chitchat_pattern, msg):
         return "GREETING"
         
     # 1. Report Generation
@@ -158,10 +165,16 @@ class ChatService:
 
         # 0. Greetings & Chit-Chat (Zero unwanted visual attachments, human tone)
         if intent == "GREETING":
-            if any(k in message.lower() for k in ["thank", "thx"]):
-                ans = f"You're welcome! Let me know if you need any progress analysis, visual evidence checks, or reports for **{project.name}**."
+            msg_lower = message.lower()
+            if any(k in msg_lower for k in ["thank", "thx"]):
+                ans = f"You're welcome! Let me know if you have any questions about **{project.name}**."
+            elif any(k in msg_lower for k in ["who are you", "what can you do", "what is your name", "help"]):
+                ans = f"I am MIRA AI, your project intelligence assistant for **{project.name}**. You can ask me specific questions about site progress, search visual evidence, compare before/after physical changes, or generate audit reports."
+            elif any(k in msg_lower for k in ["how are you", "how are you doing", "how is it going"]):
+                ans = f"I'm doing well, thank you! How can I help you with **{project.name}** today?"
             else:
-                ans = f"Hello! I am MIRA AI, your project intelligence assistant for **{project.name}**. I track site progress, analyze visual evidence, detect before/after changes, and answer queries grounded strictly in verified site records. How can I help you today?"
+                ans = f"Hello! How can I help you with **{project.name}** today?"
+
             response = ChatMessageResponse(
                 answer=ans,
                 project_id=project.id,
@@ -272,12 +285,15 @@ class ChatService:
         display_evidence = semantic_evidence if (semantic_evidence and len(semantic_evidence) > 0) else []
 
         system_content = (
-            f"You are MIRA AI, an expert project intelligence analyst for '{project.name}'. "
-            f"Answer the user's question accurately, concisely, and factually in 2-3 sentences based strictly on the verified project records provided below. "
-            f"If a user asks about an event or activity not in the records, state clearly that no such activity is documented. Do not make up facts.\n\n"
+            f"You are MIRA AI, an expert project intelligence analyst for '{project.name}'.\n"
+            f"STRICT RULES:\n"
+            f"1. Answer ONLY the specific question asked by the user in 1-2 direct sentences.\n"
+            f"2. DO NOT provide an unsolicited general project overview, background summary, or complete timeline unless explicitly requested by the user.\n"
+            f"3. Base your answer strictly on the verified project records provided below. Do not extrapolate or fabricate facts.\n"
+            f"4. If the user asks a conversational or pleasantry question, answer directly without dumping site records.\n"
+            f"5. If the records do not contain the answer, state simply that it is not documented in the verified visual evidence.\n\n"
             f"Project: {project.name}\n"
-            f"Location: {project.location_name or 'Site Location'}\n"
-            f"Description: {project.description or 'Project Workspace'}\n\n"
+            f"Location: {project.location_name or 'Site Location'}\n\n"
             f"Verified Project Visual Evidence Records:\n"
             f"{evidence_context}"
         )
@@ -287,7 +303,12 @@ class ChatService:
             {"role": "user", "content": message}
         ]
 
-        llm_answer = self._generate_with_llm(messages, max_new_tokens=160)
+        llm_answer = self._generate_with_llm(messages, max_new_tokens=140)
+
+        # Clean redundant LLM boilerplate preambles if present
+        if llm_answer:
+            llm_answer = re.sub(r'^(As per the (given|provided) information,\s*(the project being discussed is [^.]+\.)?\s*)', '', llm_answer, flags=re.IGNORECASE).strip()
+            llm_answer = re.sub(r'^(Based on the (given|provided) (information|records|context),\s*(the project is [^.]+\.)?\s*)', '', llm_answer, flags=re.IGNORECASE).strip()
 
         if llm_answer and len(llm_answer) > 10:
             response = ChatMessageResponse(

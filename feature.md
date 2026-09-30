@@ -30,9 +30,10 @@
 * **Spatial Radius Geofencing (Haversine Distance Filter)**:
   * Automatically filters candidate projects within a geographic radius (default $\le 15\text{ km}$) using GPS coordinates before decision routing.
   * Prevents cross-region routing errors (e.g., distinguishing a road project in Delhi from one in Mumbai).
-* **Automated EXIF & Manual GPS Geotagging**:
-  * Extracts camera metadata (latitude, longitude, timestamp) directly from image EXIF headers upon upload.
-  * Supports manual GPS coordinate overrides for legacy equipment or stripped metadata.
+* **Live GPS Device Fetching, Automated EXIF & Coordinate Overrides**:
+  * **One-Click Live GPS**: Acquires device geolocation (`navigator.geolocation`) with high-accuracy GPS fix in real-time during photo ingestion.
+  * **Automated EXIF Extraction**: Automatically parses camera metadata (latitude, longitude, timestamp) from image EXIF headers upon upload.
+  * **Manual Coordinate Overrides & Reset**: Supports fine-grained manual adjustments and instant clearing to fall back to EXIF headers.
 * **384-Dimensional Dense Vector Embedding (`all-MiniLM-L6-v2`)**:
   * Generates high-density semantic embeddings combining project name, visual description, detected objects, and location.
 * **Vector Indexing (`Qdrant Vector DB`)**:

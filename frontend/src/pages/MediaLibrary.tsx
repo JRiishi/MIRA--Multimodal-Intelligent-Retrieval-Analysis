@@ -1,6 +1,18 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Images, Upload, RefreshCw, ExternalLink, X, Layers, Crop, Zap } from 'lucide-react';
+import {
+  Images,
+  Upload,
+  RefreshCw,
+  ExternalLink,
+  X,
+  Layers,
+  Crop,
+  Zap,
+  MapPin,
+  Navigation,
+  Check,
+} from 'lucide-react';
 import {
   useMediaLibrary,
   useDeleteMedia,
@@ -60,9 +72,15 @@ function UploadDialog({
   const [file, setFile] = useState<File | null>(null);
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
+  const [isLocating, setIsLocating] = useState(false);
+  const [geoStatus, setGeoStatus] = useState<{
+    type: 'idle' | 'success' | 'error';
+    message: string;
+    accuracy?: number;
+  }>({ type: 'idle', message: '' });
 
-  const latNum = lat === '' ? null : Number(lat);
-  const lngNum = lng === '' ? null : Number(lng);
+  const latNum = lat.trim() === '' ? null : Number(lat);
+  const lngNum = lng.trim() === '' ? null : Number(lng);
   const coordError =
     (latNum == null) !== (lngNum == null)
       ? 'Enter both coordinates or leave both blank to rely on EXIF.'
@@ -74,7 +92,65 @@ function UploadDialog({
     setFile(null);
     setLat('');
     setLng('');
+    setIsLocating(false);
+    setGeoStatus({ type: 'idle', message: '' });
     onClose();
+  };
+
+  const fetchLiveLocation = () => {
+    if (!navigator.geolocation) {
+      setGeoStatus({
+        type: 'error',
+        message: 'Geolocation is not supported by your browser.',
+      });
+      return;
+    }
+
+    setIsLocating(true);
+    setGeoStatus({ type: 'idle', message: '' });
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude = position.coords.latitude;
+        const longitude = position.coords.longitude;
+        const accuracy = Math.round(position.coords.accuracy);
+
+        setLat(latitude.toFixed(6));
+        setLng(longitude.toFixed(6));
+        setIsLocating(false);
+        setGeoStatus({
+          type: 'success',
+          message: `Live GPS acquired (±${accuracy}m accuracy)`,
+          accuracy,
+        });
+      },
+      (error) => {
+        setIsLocating(false);
+        let msg = 'Failed to fetch live location.';
+        if (error.code === error.PERMISSION_DENIED) {
+          msg = 'Location permission denied. Please allow access in your browser.';
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          msg = 'Location information is currently unavailable.';
+        } else if (error.code === error.TIMEOUT) {
+          msg = 'Location acquisition timed out. Please try again.';
+        }
+        setGeoStatus({
+          type: 'error',
+          message: msg,
+        });
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      },
+    );
+  };
+
+  const clearLocation = () => {
+    setLat('');
+    setLng('');
+    setGeoStatus({ type: 'idle', message: '' });
   };
 
   return (
@@ -93,7 +169,7 @@ function UploadDialog({
             disabled={!file || Boolean(coordError) || busy}
             onClick={() => {
               if (!file) return;
-              if (signatureUnavailable) onUpload(file, latNum, lngNum);
+              if (signatureUnavailable || latNum != null) onUpload(file, latNum, lngNum);
               else onDirectUpload(file);
             }}
             className="btn btn-primary"
@@ -128,47 +204,107 @@ function UploadDialog({
           )}
         </Field>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Latitude" error={coordError}>
-            {(p) => (
-              <input
-                {...p}
-                type="number"
-                step="0.0001"
-                className="field value"
-                value={lat}
-                onChange={(e) => setLat(e.target.value)}
-                placeholder="27.5412"
-              />
-            )}
-          </Field>
-          <Field label="Longitude">
-            {(p) => (
-              <input
-                {...p}
-                type="number"
-                step="0.0001"
-                className="field value"
-                value={lng}
-                onChange={(e) => setLng(e.target.value)}
-                placeholder="72.2913"
-              />
-            )}
-          </Field>
+        <div className="space-y-2 pt-2 border-t border-line">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-ink-1 flex items-center gap-1.5">
+              <MapPin className="w-3.5 h-3.5 text-accent-500" aria-hidden="true" />
+              GPS Geolocation
+            </span>
+            <div className="flex items-center gap-2">
+              {(lat || lng) && (
+                <button
+                  type="button"
+                  onClick={clearLocation}
+                  className="text-[11px] text-ink-3 hover:text-ink-1 transition-colors underline decoration-dotted cursor-pointer"
+                >
+                  Clear (rely on EXIF)
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={fetchLiveLocation}
+                disabled={isLocating || busy}
+                className="btn btn-xs btn-secondary flex items-center gap-1.5 text-[11.5px]"
+                title="Fetch live GPS coordinates from device"
+              >
+                {isLocating ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 animate-spin text-accent-500" aria-hidden="true" />
+                    <span>Locating...</span>
+                  </>
+                ) : (
+                  <>
+                    <Navigation className="w-3 h-3 text-accent-500" aria-hidden="true" />
+                    <span>Fetch live location</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {geoStatus.type === 'success' && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-success-500/10 border border-success-500/20 text-[11.5px] text-success-400">
+              <Check className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+              <span>{geoStatus.message}</span>
+            </div>
+          )}
+
+          {geoStatus.type === 'error' && (
+            <div className="px-2.5 py-1.5 rounded bg-warning-500/10 border border-warning-500/20 text-[11.5px] text-warning-400 leading-snug">
+              {geoStatus.message}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <Field label="Latitude" error={coordError}>
+              {(p) => (
+                <input
+                  {...p}
+                  type="number"
+                  step="0.000001"
+                  className="field value"
+                  value={lat}
+                  onChange={(e) => {
+                    setLat(e.target.value);
+                    if (geoStatus.type !== 'idle') setGeoStatus({ type: 'idle', message: '' });
+                  }}
+                  placeholder="e.g. 28.6139"
+                />
+              )}
+            </Field>
+            <Field label="Longitude">
+              {(p) => (
+                <input
+                  {...p}
+                  type="number"
+                  step="0.000001"
+                  className="field value"
+                  value={lng}
+                  onChange={(e) => {
+                    setLng(e.target.value);
+                    if (geoStatus.type !== 'idle') setGeoStatus({ type: 'idle', message: '' });
+                  }}
+                  placeholder="e.g. 77.2090"
+                />
+              )}
+            </Field>
+          </div>
+          <p className="text-[11px] text-ink-3">
+            If left blank, GPS coordinates are extracted automatically from camera EXIF tags.
+          </p>
         </div>
 
-        {/* Transport is an implementation detail of one action, so it is
-            stated rather than hidden, and it always has a working fallback. */}
+        {/* Transport note */}
         <p className="text-[11.5px] text-ink-3 leading-relaxed flex items-start gap-2">
           <Zap className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden="true" />
           <span>
-            {signatureUnavailable
-              ? 'No upload signature available, so the file is routed through the API server.'
-              : 'The file goes straight to the Cloudinary CDN, so a large photograph does not hold an API worker. Analysis starts from the upload webhook.'}
+            {signatureUnavailable || latNum != null
+              ? 'Coordinates and file are routed through the backend AI pipeline for automatic geofencing and project matching.'
+              : 'The file goes straight to the Cloudinary CDN, so a large photograph does not hold an API worker.'}
           </span>
         </p>
 
-        {file && !signatureUnavailable && (
+        {file && !signatureUnavailable && latNum == null && (
           <button
             type="button"
             onClick={() => onUpload(file, latNum, lngNum)}
