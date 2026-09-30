@@ -59,18 +59,83 @@ graph TD
 
 ---
 
-## ☁️ Cloudinary Media Intelligence Features
+## ☁️ Dedicated Cloudinary Integration & Uses
 
-MIRA utilizes Cloudinary's media layer for computational intelligence and delivery optimization:
+MIRA transforms Cloudinary from passive cloud storage into an **Active Media Intelligence Backbone**. By offloading image transformations, metadata synchronization, provenance stamping, and content delivery directly to Cloudinary's global CDN, MIRA achieves enterprise capability with **zero local image manipulation overhead**.
 
-- ✅ **Contextual & Tag Metadata Sync (`explicit()`)**: Writes AI visual descriptions, detected activities, GPS coordinates, and Laya confidence scores directly to Cloudinary.
-- ✅ **Dynamic Provenance Badge (`l_text`)**: Generates verifiable badge overlays (`MIRA VERIFIED IMPACT | GPS 28.61N 77.20E`) on-the-fly via URL transformations.
-- ✅ **Dynamic Before/After Composites**: Generates multi-layer split comparison images (`w_1200,h_600/l_...`) directly from CDN delivery URLs without server-side image processing.
-- ✅ **AI Focal-Point Smart Cropping (`g_auto, c_fill`)**: Automatically detects subject matter to generate thumbnails and cards.
-- ✅ **Multi-Aspect Campaign Exporter**: Instant social and report exports in 1:1 Square, 16:9 Landscape, and 9:16 Vertical Story formats.
-- ✅ **Adaptive Format & Quality (`f_auto, q_auto`)**: Delivers AVIF/WebP formats with perceptual compression.
-- ✅ **Direct Signed Uploads & Presets**: Authenticated HMAC signatures and presets (`mira_field_upload`) allow direct client-to-Cloudinary uploads.
-- ✅ **Event-Driven Webhook (`/media/webhook`)**: Automated asynchronous pipeline triggers upon asset upload completion.
+### Detailed Breakdown of Cloudinary Uses:
+
+#### 1. Direct Authenticated Signed Uploads (`/media/upload/signature`)
+- **How it works**: The backend generates secure, time-stamped HMAC signatures (`api_sign_request`) containing upload parameters and API keys.
+- **Benefit**: Allows field devices and mobile web clients to stream multi-megabyte photographs directly to Cloudinary without bottlenecking the backend server.
+
+#### 2. Two-Way Intelligence Metadata Write-Back (`explicit()`)
+- **How it works**: After local AI models (Moondream VLM & Laya) extract scene descriptions, detected equipment, activities, and GPS coordinates, MIRA executes `cloudinary.uploader.explicit()`.
+- **Fields Synced**:
+  - `context.description`: Natural language AI visual caption.
+  - `context.activity`: Detected domain activity (e.g., *road excavation, solar mounting*).
+  - `context.laya_confidence`: Mathematical confidence score from decision router.
+  - `context.gps_lat` & `context.gps_lon`: Precise latitude/longitude.
+  - `tags`: Tag array including `mira_field`, `verified`, project ID slugs, and activity tags.
+- **Benefit**: Turns Cloudinary into a self-contained, queryable **single source of truth** for both media assets and their AI intelligence.
+
+#### 3. Dynamic Provenance Badging & Geo-Watermarking (`l_text`)
+- **How it works**: Dynamically constructs layered text overlays at delivery time:
+  ```text
+  /l_text:Arial_22_bold:MIRA%20VERIFIED%20IMPACT/fl_layer_apply,g_north_east,x_20,y_20/
+  l_text:Arial_16_bold:GPS%2028.61N%2077.20E%20|%202026-09-30/fl_layer_apply,g_south_west,x_20,y_20/q_auto,f_auto
+  ```
+- **Benefit**: Provides tamper-evident visual verification badges and spatial provenance stamps without altering or duplicating the original high-resolution master file.
+
+#### 4. Side-by-Side Progression Composites (`c_fill, l_...`)
+- **How it works**: Compares baseline anchor photographs with current stage captures in a single side-by-side composite transformation:
+  ```text
+  /c_fill,w_1200,h_600/l_<after_public_id>/c_fill,w_600,h_600/fl_layer_apply,g_east/
+  l_text:Arial_20_bold:BEFORE/fl_layer_apply,g_north_west,x_20,y_20/
+  l_text:Arial_20_bold:AFTER/fl_layer_apply,g_north_east,x_20,y_20/q_auto,f_auto
+  ```
+- **Benefit**: Generates visual audit evidence comparisons instantly via CDN URLs without requiring server-side PIL/OpenCV image rendering.
+
+#### 5. AI Smart Focal-Point Cropping (`c_fill, g_auto`)
+- **How it works**: Uses Cloudinary's AI gravity detection (`g_auto`) to analyze visual saliency and center thumbnails on detected machinery, workers, and infrastructure rather than dumb center crops.
+- **Benefit**: Ensures high-clarity previews in UI cards and telemetry lists across varying aspect ratios.
+
+#### 6. Multi-Aspect Campaign & Dossier Exporter
+- **How it works**: On-demand generation of standard editorial aspect ratios for stakeholders, government reports, and social impact campaigns:
+  - **1:1 Square** (`c_fill,g_auto,w_1080,h_1080,q_auto,f_auto`): Executive cards and grid reports.
+  - **16:9 Landscape** (`c_fill,g_auto,w_1920,h_1080,q_auto,f_auto`): Presentation slides & web audit dossiers.
+  - **9:16 Vertical Story** (`c_fill,g_auto,w_1080,h_1920,q_auto,f_auto`): Mobile field feeds and inspection stories.
+
+#### 7. Adaptive Format & Bandwidth Optimization (`f_auto, q_auto`)
+- **How it works**: Cloudinary evaluates user browser capabilities and network conditions to deliver next-generation formats (`AVIF`, `WebP`) with perceptual quality compression.
+- **Benefit**: Drastically reduces load times and bandwidth consumption on low-connectivity field networks.
+
+#### 8. Cloudinary Boolean Search API Integration (`Search()`)
+- **How it works**: Integrates direct Boolean expression querying against Cloudinary's index:
+  ```python
+  Search().expression("folder:cc_hack AND tags:verified AND context.activity:road*").max_results(30).execute()
+  ```
+- **Benefit**: Powers hybrid multi-engine search, combining Cloudinary metadata filters with Qdrant vector semantic search.
+
+#### 9. Event-Driven Webhooks (`/media/webhook`)
+- **How it works**: Asynchronous HTTP notifications from Cloudinary notify MIRA backend of asset ingestion and transformation events, triggering background pipeline processing automatically.
+
+#### 10. Automated Upload Presets (`mira_field_upload`)
+- **How it works**: Pre-configures incoming field asset dimensions (max 4000x4000), tags, and folder organization via Cloudinary Admin API presets.
+
+---
+
+### Cloudinary Transformation Matrix
+
+| Transformation Mode | Purpose | URL Transformation Parameters | Output Deliverable |
+| :--- | :--- | :--- | :--- |
+| **Optimized Delivery** | High-speed web delivery | `q_auto,f_auto` | Next-gen format (AVIF/WebP) with perceptual compression |
+| **Smart Thumbnail** | UI grid card previews | `c_fill,g_auto,w_400,h_300,q_auto,f_auto` | AI focal-point centered thumbnail |
+| **Provenance Stamp** | Audit verification badge | `l_text:Arial_22_bold:MIRA%20VERIFIED/.../q_auto,f_auto` | Burned GPS, Date, and Verified watermark |
+| **Visual Progression** | Before/After milestone diff | `c_fill,w_1200,h_600/l_<id>/fl_layer_apply,g_east/...` | Dual-image side-by-side composite comparison |
+| **Square Aspect** | Dossier & executive cards | `c_fill,g_auto,w_1080,h_1080,q_auto,f_auto` | 1:1 format for compact audit layouts |
+| **Landscape Aspect** | Desktop presentation | `c_fill,g_auto,w_1920,h_1080,q_auto,f_auto` | 16:9 widescreen format |
+| **Story Aspect** | Mobile field view | `c_fill,g_auto,w_1080,h_1920,q_auto,f_auto` | 9:16 vertical smartphone format |
 
 ---
 
