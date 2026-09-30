@@ -3,21 +3,10 @@ import { clsx } from 'clsx';
 import { AUTO_ASSIGN_THRESHOLD, REVIEW_THRESHOLD, confidenceBand } from '../lib/presentation';
 import type { MediaAsset } from '../types';
 
-/**
- * Distribution of routing confidence across the corpus.
- *
- * A mean confidence number hides the thing that matters. What a reviewer needs
- * to know is *how much of the corpus sits in each decision band*, because the
- * bands are the system's actual contract: at or above 40 percent it auto
- * assigns, 28 to 40 goes to a person, below 28 is rejected. Plotting the
- * distribution against those thresholds makes misrouting visible at a glance
- * in a way an average cannot.
- */
-
 const BANDS = [
-  { key: 'auto', label: 'auto-assign', range: `>= ${AUTO_ASSIGN_THRESHOLD * 100}%`, min: AUTO_ASSIGN_THRESHOLD, max: 1.0001 },
-  { key: 'review', label: 'review band', range: `${REVIEW_THRESHOLD * 100}-${AUTO_ASSIGN_THRESHOLD * 100}%`, min: REVIEW_THRESHOLD, max: AUTO_ASSIGN_THRESHOLD },
-  { key: 'reject', label: 'rejected', range: `< ${REVIEW_THRESHOLD * 100}%`, min: 0, max: REVIEW_THRESHOLD },
+  { key: 'auto', label: 'AUTO-ASSIGN', range: `>= ${AUTO_ASSIGN_THRESHOLD * 100}%`, min: AUTO_ASSIGN_THRESHOLD, max: 1.0001 },
+  { key: 'review', label: 'REVIEW BAND', range: `${REVIEW_THRESHOLD * 100}-${AUTO_ASSIGN_THRESHOLD * 100}%`, min: REVIEW_THRESHOLD, max: AUTO_ASSIGN_THRESHOLD },
+  { key: 'reject', label: 'REJECTED', range: `< ${REVIEW_THRESHOLD * 100}%`, min: 0, max: REVIEW_THRESHOLD },
 ] as const;
 
 const BINS = 20;
@@ -54,25 +43,26 @@ export default function ConfidenceHistogram({
 
   if (model.scored === 0) {
     return (
-      <div className={clsx('panel p-4', className)}>
-        <span className="label">Confidence distribution</span>
-        <p className="text-[12.5px] text-ink-3 mt-2">
-          No confidence readings yet. The distribution appears once the router has scored the corpus.
-        </p>
+      <div className={clsx('p-4 border border-white/[0.08]', className)}>
+        <p className="text-xs text-neutral-500 font-mono">No confidence readings scored yet.</p>
       </div>
     );
   }
 
   return (
-    <div className={clsx('panel p-4', className)}>
-      <div className="flex items-baseline justify-between gap-3 mb-3">
-        <span className="label">Confidence distribution</span>
-        <span className="meta">{model.scored} scored</span>
+    <div className={clsx('p-4 border border-white/[0.08]', className)}>
+      <div className="flex items-baseline justify-between gap-3 mb-4">
+        <span className="text-[10.5px] font-mono tracking-widest text-neutral-500 uppercase">
+          ROUTING CONFIDENCE PROFILE
+        </span>
+        <span className="text-xs font-mono text-neutral-400">{model.scored} SCORED</span>
       </div>
 
-      <div className="flex items-end gap-[2px] h-16 mb-2" role="img" aria-label={
-        BANDS.map((b) => `${b.label}: ${model.bandCounts[b.key]}`).join(', ')
-      }>
+      <div
+        className="flex items-end gap-[3px] h-16 mb-2"
+        role="img"
+        aria-label={BANDS.map((b) => `${b.label}: ${model.bandCounts[b.key]}`).join(', ')}
+      >
         {model.bins.map((count, i) => {
           const lower = i / BINS;
           const band = confidenceBand(lower + 0.001);
@@ -81,12 +71,12 @@ export default function ConfidenceHistogram({
             <span
               key={i}
               className={clsx(
-                'flex-1 rounded-[1px] transition-[height,background-color] duration-200',
+                'flex-1 transition-[height] duration-200',
                 band === 'auto'
-                  ? 'bg-ok-500'
+                  ? 'bg-white'
                   : band === 'review'
-                    ? 'bg-caution-500'
-                    : 'bg-danger-500',
+                    ? 'bg-neutral-400'
+                    : 'bg-neutral-700',
                 count === 0 && 'bg-transparent',
               )}
               style={{ height }}
@@ -95,51 +85,34 @@ export default function ConfidenceHistogram({
         })}
       </div>
 
-      {/* Threshold axis. Positions are derived, not hardcoded. */}
-      <div className="relative h-3 mb-3" aria-hidden="true">
+      {/* Threshold axis */}
+      <div className="relative h-3 mb-4 border-t border-white/[0.08]" aria-hidden="true">
         <span
-          className="absolute top-0 w-px h-2 bg-line-strong"
+          className="absolute top-0 w-px h-2 bg-white/40"
           style={{ left: `${AUTO_ASSIGN_THRESHOLD * 100}%` }}
         />
         <span
-          className="absolute top-0 w-px h-2 bg-line-strong"
+          className="absolute top-0 w-px h-2 bg-white/40"
           style={{ left: `${REVIEW_THRESHOLD * 100}%` }}
         />
-        <span className="label absolute left-0 bottom-0">0%</span>
-        <span className="label absolute right-0 bottom-0">100%</span>
+        <span className="text-[9.5px] font-mono text-neutral-600 absolute left-0 top-1">0%</span>
+        <span className="text-[9.5px] font-mono text-neutral-600 absolute right-0 top-1">100%</span>
       </div>
 
-      <ul className="grid grid-cols-3 gap-2 pt-3 rule-t">
+      <div className="grid grid-cols-3 gap-2 pt-3 border-t border-white/[0.08] text-xs font-mono">
         {BANDS.map((band) => {
           const count = model.bandCounts[band.key];
           return (
-            <li key={band.key}>
+            <div key={band.key}>
               <div className="flex items-baseline gap-1.5">
-                <span
-                  className={clsx(
-                    'w-2 h-2 flex-shrink-0',
-                    band.key === 'auto'
-                      ? 'bg-ok-500'
-                      : band.key === 'review'
-                        ? 'bg-caution-500'
-                        : 'bg-danger-500',
-                  )}
-                  aria-hidden="true"
-                />
-                <span className="value text-[15px] font-semibold">{count}</span>
-                <span className="label">{band.range}</span>
+                <span className="text-white font-medium">{count}</span>
+                <span className="text-[10px] text-neutral-500">{band.range}</span>
               </div>
-              <p className="label mt-0.5 truncate">{band.label}</p>
-            </li>
+              <p className="text-[10px] text-neutral-500 uppercase mt-0.5 truncate">{band.label}</p>
+            </div>
           );
         })}
-      </ul>
-
-      {model.unscored > 0 && (
-        <p className="meta mt-3 pt-2.5 rule-t">
-          {model.unscored} capture{model.unscored === 1 ? '' : 's'} not yet scored
-        </p>
-      )}
+      </div>
     </div>
   );
 }

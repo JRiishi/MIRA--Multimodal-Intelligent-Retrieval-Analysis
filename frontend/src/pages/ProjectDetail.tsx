@@ -2,24 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
-  ArrowLeft,
-  Trash2,
-  Images,
-  Clock,
-  GitCompare,
-  MessageSquare,
-  FileText,
-  Send,
-  Eraser,
   Copy,
   Check,
   MapPin,
-  Sparkles,
-  AlertTriangle,
   ChevronsLeftRight,
+  Trash2,
 } from 'lucide-react';
 import { useProject, useDeleteProject } from '../hooks/projects';
-import { useMediaLibrary, useAssetTransformations } from '../hooks/media';
+import { useMediaLibrary, useAssetTransformations, useDeleteMedia } from '../hooks/media';
 import {
   useProjectTimeline,
   useProjectChat,
@@ -31,39 +21,42 @@ import {
 import {
   EmptyState,
   ErrorState,
-  Skeleton,
-  PanelHeader,
-  Chip,
   Modal,
-  Meter,
-  ScoreReadout,
   Coordinate,
-  AssetId,
   SegmentedControl,
 } from '../components/ui';
 import ActivityDensity from '../components/ActivityDensity';
 import { ChatMessageRenderer } from '../components/ChatMessageRenderer';
 import { humanizeToken, relativeTime, shortDate, stamp, statusOf } from '../lib/presentation';
+import { UploadDialog } from './MediaLibrary';
 import type { ChatEvidenceItem, MediaAsset } from '../types';
 
 type TabId = 'overview' | 'media' | 'timeline' | 'change' | 'ask' | 'report';
 
-const TABS: { id: TabId; label: string }[] = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'media', label: 'Media' },
-  { id: 'timeline', label: 'Timeline' },
-  { id: 'change', label: 'Progression' },
-  { id: 'ask', label: 'Ask' },
-  { id: 'report', label: 'Report' },
+const TABS: { id: TabId; label: string; number: string }[] = [
+  { id: 'overview', label: 'OVERVIEW', number: '01' },
+  { id: 'media', label: 'EVIDENCE', number: '02' },
+  { id: 'change', label: 'PROGRESSION', number: '03' },
+  { id: 'ask', label: 'INTELLIGENCE', number: '04' },
+  { id: 'timeline', label: 'TIMELINE', number: '05' },
+  { id: 'report', label: 'AUDIT', number: '06' },
 ];
 
 /* ------------------------------------------------------------------ */
-/* Evidence dialog                                                     */
+/* Evidence Dialog                                                    */
 /* ------------------------------------------------------------------ */
 
 type DetailTab = 'original' | 'provenance' | 'campaign';
 
-function EvidenceDialog({ item, onClose }: { item: ChatEvidenceItem | null; onClose: () => void }) {
+function EvidenceDialog({
+  item,
+  onClose,
+  onDelete,
+}: {
+  item: ChatEvidenceItem | null;
+  onClose: () => void;
+  onDelete?: (assetId: string) => void;
+}) {
   const [tab, setTab] = useState<DetailTab>('original');
   const [copied, setCopied] = useState(false);
   const { data } = useAssetTransformations(item?.asset_id ?? null);
@@ -98,85 +91,102 @@ function EvidenceDialog({ item, onClose }: { item: ChatEvidenceItem | null; onCl
 
   return (
     <Modal
-      open
+      open={item != null}
       onClose={onClose}
-      title="Evidence detail"
-      width="max-w-3xl"
+      title="Evidence Inspection"
+      width="max-w-4xl"
       footer={
-        <>
-          <button type="button" onClick={copy} className="btn btn-secondary">
-            {copied ? (
-              <>
-                <Check className="w-3.5 h-3.5" aria-hidden="true" />
-                Copied
-              </>
-            ) : (
-              <>
-                <Copy className="w-3.5 h-3.5" aria-hidden="true" />
-                Copy URL
-              </>
+        <div className="flex items-center justify-between w-full">
+          <div>
+            {onDelete && item.asset_id && (
+              <button
+                type="button"
+                onClick={() => onDelete(item.asset_id)}
+                className="btn btn-danger font-mono text-xs"
+              >
+                DELETE EVIDENCE
+              </button>
             )}
-          </button>
-          <button type="button" onClick={onClose} className="btn btn-primary">
-            Close
-          </button>
-        </>
+          </div>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={onClose} className="btn btn-secondary font-mono text-xs">
+              CLOSE
+            </button>
+            {current && (
+              <button
+                type="button"
+                onClick={copy}
+                className="btn btn-primary font-mono text-xs"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-[#ff6a00]" />
+                    <span>COPIED CDN URL</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>COPY CDN URL</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
       }
     >
-      <div className="px-4 pt-3">
-        <SegmentedControl<DetailTab>
-          ariaLabel="Transformation view"
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: 'original', label: 'Optimised' },
-            { value: 'provenance', label: 'Provenance' },
-            { value: 'campaign', label: 'Campaign' },
-          ]}
-        />
-      </div>
-
-      <div className="p-4 space-y-4">
-        <div className="panel-sunken aspect-[16/9] flex items-center justify-center overflow-hidden">
-          <img src={current} alt={item.description} className="max-h-full max-w-full object-contain" />
+      <div className="space-y-6">
+        <div className="flex border-b border-white/[0.08] text-xs font-mono">
+          <button
+            type="button"
+            onClick={() => setTab('original')}
+            className={`pb-2 px-3 border-b-2 transition-colors ${tab === 'original' ? 'border-[#ff6a00] text-white font-medium' : 'border-transparent text-neutral-500 hover:text-neutral-300'}`}
+          >
+            ORIGINAL
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('provenance')}
+            className={`pb-2 px-3 border-b-2 transition-colors ${tab === 'provenance' ? 'border-[#ff6a00] text-white font-medium' : 'border-transparent text-neutral-500 hover:text-neutral-300'}`}
+          >
+            SIGNED PROVENANCE
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('campaign')}
+            className={`pb-2 px-3 border-b-2 transition-colors ${tab === 'campaign' ? 'border-[#ff6a00] text-white font-medium' : 'border-transparent text-neutral-500 hover:text-neutral-300'}`}
+          >
+            CAMPAIGN CROPS
+          </button>
         </div>
 
-        <p className="text-[13px] text-ink-2 leading-relaxed">{item.description}</p>
+        <div className="aspect-[16/10] bg-black border border-white/[0.08] flex items-center justify-center overflow-hidden">
+          {current ? (
+            <img
+              src={current}
+              alt={item.description}
+              className="max-h-full max-w-full object-contain"
+            />
+          ) : (
+            <span className="text-xs font-mono text-neutral-600">PREVIEW UNAVAILABLE</span>
+          )}
+        </div>
 
-        {current && (
-          <div>
-            <span className="label">Delivery URL</span>
-            <code className="block mt-1.5 p-2.5 panel-sunken text-[10.5px] leading-relaxed break-all text-ink-2">
-              {current}
-            </code>
+        <div className="space-y-2 text-xs font-mono">
+          <div className="text-neutral-400">DESCRIPTION:</div>
+          <div className="text-white text-sm font-sans">{item.description}</div>
+          <div className="pt-2 flex items-center justify-between text-neutral-500">
+            <span>ASSET ID: {item.asset_id}</span>
+            <span>ACTIVITY: {humanizeToken(item.activity)}</span>
           </div>
-        )}
-
-        {tab === 'campaign' && aspects.length > 0 && (
-          <ul className="grid grid-cols-3 gap-3">
-            {aspects.map((aspect) => (
-              <li key={aspect.label} className="panel overflow-hidden">
-                <img
-                  src={aspect.url}
-                  alt={`${aspect.label} campaign export`}
-                  loading="lazy"
-                  decoding="async"
-                  className="aspect-square w-full object-cover bg-sunken"
-                />
-                <div className="px-2 py-1.5 rule-t">
-                  <span className="label">{aspect.label}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+        </div>
       </div>
     </Modal>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Progression comparison                                              */
+/* Progression Comparison Panel                                       */
 /* ------------------------------------------------------------------ */
 
 type CompareMode = 'slider' | 'split' | 'composite';
@@ -190,9 +200,10 @@ function ProgressionPanel({
   assets: MediaAsset[];
   assetCount: number;
 }) {
-  const mutation = useProjectChangeAnalysis(projectId);
   const [mode, setMode] = useState<CompareMode>('slider');
   const [position, setPosition] = useState(50);
+  const mutation = useProjectChangeAnalysis(projectId);
+
   const [picking, setPicking] = useState(false);
   const [pair, setPair] = useState<{ before: string | null; after: string | null }>({
     before: null,
@@ -200,7 +211,6 @@ function ProgressionPanel({
   });
   const result = mutation.data;
 
-  // Endpoints must be dated, because a progression pair is chronological.
   const comparable = useMemo(
     () =>
       assets
@@ -212,81 +222,73 @@ function ProgressionPanel({
 
   if (assetCount < 2) {
     return (
-      <div className="space-y-4">
-        <div className="panel">
-          <EmptyState
-            icon={GitCompare}
-            title="Not enough evidence"
-            description="Visual progression needs at least two captures from this target. Ingest more field media to unlock the comparison."
-          />
-        </div>
-      </div>
+      <EmptyState
+        title="Insufficient Evidence for Progression"
+        description="Visual progression requires at least two dated captures from this workspace target. Ingest more captures to compute change detection."
+      />
     );
   }
 
   return (
-    <div className="space-y-3">
-      <div className="panel p-3 flex flex-wrap items-center gap-3">
+    <div className="space-y-8">
+      {/* Action Line */}
+      <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-white/[0.08]">
         <SegmentedControl<CompareMode>
           ariaLabel="Comparison mode"
           value={mode}
           onChange={setMode}
           options={[
-            { value: 'slider', label: 'Slider' },
-            { value: 'split', label: 'Split' },
-            { value: 'composite', label: 'Composite' },
+            { value: 'slider', label: 'Interactive Slider' },
+            { value: 'split', label: 'Side-by-Side Split' },
+            { value: 'composite', label: 'Cloudinary Composite' },
           ]}
         />
-        <button
-          type="button"
-          onClick={() => setPicking(true)}
-          disabled={comparable.length < 2}
-          className="btn btn-sm btn-secondary"
-          title="Compare any two dates instead of the earliest and latest"
-        >
-          <GitCompare className="w-3 h-3" aria-hidden="true" />
-          Choose pair
-        </button>
-        <button
-          type="button"
-          onClick={() => mutation.mutate({})}
-          disabled={mutation.isPending}
-          className="btn btn-secondary btn-sm ml-auto"
-        >
-          {mutation.isPending ? 'Computing' : 'Recompute'}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setPicking(true)}
+            disabled={comparable.length < 2}
+            className="btn btn-sm btn-secondary font-mono text-xs"
+          >
+            CUSTOM PAIR
+          </button>
+          <button
+            type="button"
+            onClick={() => mutation.mutate({})}
+            disabled={mutation.isPending}
+            className="btn btn-sm btn-primary font-mono text-xs"
+          >
+            {mutation.isPending ? 'COMPUTING...' : 'RECOMPUTE CHANGE →'}
+          </button>
+        </div>
       </div>
 
       {mutation.isError && (
         <ErrorState
-          title="Comparison failed"
-          detail="The progression request did not complete."
+          title="Progression Analysis Failed"
+          detail="Could not compute structural change analysis for this target."
           onRetry={() => mutation.mutate({})}
         />
       )}
 
       {!result && !mutation.isPending && !mutation.isError && (
-        <div className="panel">
-          <EmptyState
-            icon={GitCompare}
-            title="Comparison not run yet"
-            description="Compute a structural comparison between the baseline and the most recent capture."
-            action={
-              <button type="button" onClick={() => mutation.mutate({})} className="btn btn-primary">
-                Run comparison
-              </button>
-            }
-          />
-        </div>
+        <EmptyState
+          title="Progression Not Computed Yet"
+          description="Run structural change analysis to compute before/after difference."
+          action={
+            <button type="button" onClick={() => mutation.mutate({})} className="btn btn-primary font-mono text-xs">
+              RUN PROGRESSION ANALYSIS →
+            </button>
+          }
+        />
       )}
 
       {mutation.isPending && (
-        <div className="panel p-12 flex flex-col items-center gap-3" aria-busy="true">
-          <span
-            className="w-4 h-4 border-2 border-line-strong border-t-brand-600 rounded-full animate-spin"
-            aria-hidden="true"
-          />
-          <span className="label">Measuring visual change</span>
+        <div className="py-20 flex flex-col items-center justify-center gap-3" aria-busy="true">
+          <div className="w-5 h-5 border border-[#ff6a00] border-t-transparent animate-spin rounded-full" />
+          <span className="font-mono text-xs uppercase tracking-widest text-neutral-400">
+            Computing structural difference (SSIM)...
+          </span>
         </div>
       )}
 
@@ -295,241 +297,171 @@ function ProgressionPanel({
         const afterAsset = comparable.find((a) => a.id === result.after_asset_id);
 
         return (
-          <>
-            {/* Summary Metrics & AI Insight */}
-            <div className="panel p-3.5 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div>
-                  <span className="label block">Visual Change</span>
-                  <div className="flex items-baseline gap-2 mt-0.5">
-                    <span className="value text-[20px] font-semibold text-ink">
-                      {(result.change_score * 100).toFixed(1)}%
-                    </span>
-                    <span className="meta">delta</span>
-                  </div>
+          <div className="space-y-8">
+            {/* Typographic Change Readout */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 py-6 border-y border-white/[0.08]">
+              <div>
+                <div className="text-3xl font-light font-sans text-white">
+                  {(result.change_score * 100).toFixed(1)}%
                 </div>
-                <div className="h-7 w-px bg-line" aria-hidden="true" />
-                <div>
-                  <span className="label block">Status</span>
-                  <div className="mt-0.5">
-                    <Chip className={result.change_detected ? 'chip-caution' : 'chip-ok'}>
-                      {result.change_detected ? 'Material change detected' : 'No material change'}
-                    </Chip>
-                  </div>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-[#ff6a00] mt-1 font-bold">
+                  STRUCTURAL CHANGE DELTA (SSIM)
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm font-mono text-white mt-1 uppercase">
+                  {result.change_detected ? 'MATERIAL CHANGE DETECTED' : 'NOMINAL VARIATION'}
+                </div>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-neutral-500 mt-1">
+                  STATUS
                 </div>
               </div>
 
               {result.summary && (
-                <div className="flex-1 min-w-[260px] max-w-xl bg-sunken/60 border border-line/70 rounded-[var(--radius-control)] p-2.5 text-[12px] text-ink-2 leading-relaxed">
-                  <div className="flex items-center gap-1.5 text-ink font-medium mb-0.5">
-                    <Sparkles className="w-3.5 h-3.5 text-signal-500 flex-shrink-0" />
-                    <span>Progression Analysis</span>
-                  </div>
+                <div className="md:col-span-1 text-[13px] text-neutral-300 leading-relaxed">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-neutral-500 block mb-1">
+                    SYNTHESIS
+                  </span>
                   <p>{result.summary}</p>
                 </div>
               )}
             </div>
 
-            {/* Visual Viewport */}
-            <div className="panel p-4">
-              {mode === 'slider' && (
-                <div className="max-w-3xl mx-auto space-y-3">
-                  {/* Slider Canvas */}
-                  <div className="relative aspect-[16/10] max-h-[440px] bg-rail rounded-[var(--radius-panel)] border border-line-strong overflow-hidden select-none shadow-sm group">
-                    {/* Background: After Image */}
+            {/* Slider Comparison View */}
+            {mode === 'slider' && (
+              <div className="space-y-4">
+                <div className="relative aspect-[16/10] max-h-[540px] bg-black border border-white/[0.12] overflow-hidden select-none group">
+                  <img
+                    src={result.after_url}
+                    alt="Current capture"
+                    className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                  />
+                  <div
+                    className="absolute inset-0 overflow-hidden pointer-events-none"
+                    style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}
+                  >
                     <img
-                      src={result.after_url}
-                      alt="Most recent capture"
-                      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-                    />
-
-                    {/* Foreground: Before Image (Clipped) */}
-                    <div
-                      className="absolute inset-0 overflow-hidden pointer-events-none"
-                      style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}
-                    >
-                      <img
-                        src={result.before_url}
-                        alt="Baseline capture"
-                        className="absolute inset-0 w-full h-full object-cover"
-                      />
-                    </div>
-
-                    {/* Divider Line & Circular Grab Handle */}
-                    <div
-                      className="absolute top-0 bottom-0 w-[2px] bg-white shadow-[0_0_10px_rgba(0,0,0,0.7)] pointer-events-none"
-                      style={{ left: `${position}%` }}
-                      aria-hidden="true"
-                    >
-                      <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-8 h-8 rounded-full bg-surface border border-line-strong shadow-lg flex items-center justify-center text-ink pointer-events-none group-hover:scale-110 transition-transform">
-                        <ChevronsLeftRight className="w-4 h-4 text-ink-2" />
-                      </div>
-                    </div>
-
-                    {/* Top Badges */}
-                    <div className="absolute top-3 left-3 pointer-events-none z-10">
-                      <span className="px-2.5 py-1 bg-rail/85 text-rail-ink border border-white/10 rounded text-[11px] font-mono shadow-md flex items-center gap-1.5 backdrop-blur-sm">
-                        <span className="w-1.5 h-1.5 rounded-full bg-ok-500" />
-                        <span>Baseline</span>
-                        {beforeAsset?.uploaded_at && (
-                          <span className="text-rail-ink-2 opacity-80">
-                            · {shortDate(beforeAsset.uploaded_at).replace(/,.*/, '')}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-
-                    <div className="absolute top-3 right-3 pointer-events-none z-10">
-                      <span className="px-2.5 py-1 bg-brand-900/85 text-brand-100 border border-brand-500/30 rounded text-[11px] font-mono shadow-md flex items-center gap-1.5 backdrop-blur-sm">
-                        <span className="w-1.5 h-1.5 rounded-full bg-signal-400" />
-                        <span>Latest</span>
-                        {afterAsset?.uploaded_at && (
-                          <span className="text-brand-200 opacity-80">
-                            · {shortDate(afterAsset.uploaded_at).replace(/,.*/, '')}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-
-                    {/* Transparent Full-Canvas Drag Input */}
-                    <label htmlFor="progression-slider" className="sr-only">
-                      Reveal baseline capture
-                    </label>
-                    <input
-                      id="progression-slider"
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={position}
-                      onChange={(e) => setPosition(Number(e.target.value))}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20"
+                      src={result.before_url}
+                      alt="Baseline capture"
+                      className="absolute inset-0 w-full h-full object-cover"
                     />
                   </div>
 
-                  {/* Interactive Control Rail & Presets */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1 px-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="label text-ink-3 mr-1">Presets:</span>
-                      <button
-                        type="button"
-                        onClick={() => setPosition(0)}
-                        className={clsx('btn btn-xs', position === 0 ? 'btn-primary' : 'btn-secondary')}
-                      >
-                        Baseline (0%)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPosition(50)}
-                        className={clsx('btn btn-xs', position === 50 ? 'btn-primary' : 'btn-secondary')}
-                      >
-                        Split (50%)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPosition(100)}
-                        className={clsx('btn btn-xs', position === 100 ? 'btn-primary' : 'btn-secondary')}
-                      >
-                        Latest (100%)
-                      </button>
+                  {/* Divider Line */}
+                  <div
+                    className="absolute top-0 bottom-0 w-[2px] bg-[#ff6a00] pointer-events-none"
+                    style={{ left: `${position}%` }}
+                    aria-hidden="true"
+                  >
+                    <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-7 h-7 bg-black border border-[#ff6a00] flex items-center justify-center text-white pointer-events-none">
+                      <ChevronsLeftRight className="w-3.5 h-3.5 text-[#ff6a00]" />
                     </div>
+                  </div>
 
-                    <div className="flex items-center gap-2.5 flex-1 max-w-xs ml-auto">
-                      <span className="label text-ink-3 text-[10px]">0%</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={position}
-                        onChange={(e) => setPosition(Number(e.target.value))}
-                        className="flex-1 h-1.5 bg-sunken rounded appearance-none cursor-pointer accent-brand-600 focus:outline-none"
-                      />
-                      <span className="label text-ink-3 text-[10px]">100%</span>
-                      <span className="value text-[11px] text-ink font-semibold w-8 text-right font-mono">
-                        {position}%
-                      </span>
+                  {/* Labels */}
+                  <div className="absolute top-4 left-4 pointer-events-none">
+                    <span className="px-2.5 py-1 bg-black/90 text-white border border-white/20 text-[11px] font-mono">
+                      BEFORE {beforeAsset?.uploaded_at ? `· ${shortDate(beforeAsset.uploaded_at).replace(/,.*/, '')}` : ''}
+                    </span>
+                  </div>
+
+                  <div className="absolute top-4 right-4 pointer-events-none">
+                    <span className="px-2.5 py-1 bg-black/90 text-[#ff6a00] border border-[#ff6a00]/40 text-[11px] font-mono">
+                      AFTER {afterAsset?.uploaded_at ? `· ${shortDate(afterAsset.uploaded_at).replace(/,.*/, '')}` : ''}
+                    </span>
+                  </div>
+
+                  <input
+                    id="progression-slider"
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={position}
+                    onChange={(e) => setPosition(Number(e.target.value))}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-20"
+                    aria-label="Drag slider to compare baseline and recent captures"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-xs font-mono text-neutral-500 pt-2">
+                  <div className="flex items-center gap-2">
+                    <span>PRESETS:</span>
+                    <button type="button" onClick={() => setPosition(0)} className="hover:text-white transition-colors">
+                      0% (BEFORE)
+                    </button>
+                    <span>·</span>
+                    <button type="button" onClick={() => setPosition(50)} className="hover:text-white transition-colors">
+                      50% (SPLIT)
+                    </button>
+                    <span>·</span>
+                    <button type="button" onClick={() => setPosition(100)} className="hover:text-white transition-colors">
+                      100% (AFTER)
+                    </button>
+                  </div>
+                  <span>POSITION: {position}%</span>
+                </div>
+              </div>
+            )}
+
+            {/* Side by side split view */}
+            {mode === 'split' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <div className="border border-white/[0.08] overflow-hidden">
+                    <div className="p-3 border-b border-white/[0.08] flex items-center justify-between text-xs font-mono text-neutral-400">
+                      <span>BASELINE ANCHOR</span>
+                      {beforeAsset?.uploaded_at && <span>{shortDate(beforeAsset.uploaded_at)}</span>}
+                    </div>
+                    <div className="aspect-[16/10] bg-black">
+                      <img src={result.before_url} alt="Baseline capture" className="w-full h-full object-cover" />
                     </div>
                   </div>
                 </div>
-              )}
-
-              {mode === 'split' && (
-                <div className="max-w-4xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {[
-                    { label: 'Baseline', url: result.before_url, id: result.before_asset_id, asset: beforeAsset },
-                    { label: 'Latest Capture', url: result.after_url, id: result.after_asset_id, asset: afterAsset },
-                  ].map((side) => (
-                    <figure key={side.label} className="panel overflow-hidden border border-line bg-surface flex flex-col">
-                      <div className="px-3.5 py-2 rule-b flex items-center justify-between gap-2">
-                        <span className="label-strong text-[12px]">{side.label}</span>
-                        {side.asset?.uploaded_at && (
-                          <span className="meta">{shortDate(side.asset.uploaded_at)}</span>
-                        )}
-                      </div>
-                      <div className="aspect-[16/10] max-h-[300px] bg-sunken overflow-hidden">
-                        <img
-                          src={side.url}
-                          alt={`${side.label} capture`}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                      <figcaption className="p-2.5 rule-t flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          {side.asset?.activity && (
-                            <Chip className="chip-neutral">{humanizeToken(side.asset.activity)}</Chip>
-                          )}
-                        </div>
-                        <AssetId id={side.id} />
-                      </figcaption>
-                    </figure>
-                  ))}
-                </div>
-              )}
-
-              {mode === 'composite' && (
-                <div className="max-w-3xl mx-auto space-y-2">
-                  <div className="aspect-[16/10] max-h-[440px] bg-sunken border border-line rounded-[var(--radius-panel)] overflow-hidden flex items-center justify-center">
-                    {result.composite_url ? (
-                      <img
-                        src={result.composite_url}
-                        alt="Cloudinary composite of baseline and current capture"
-                        className="w-full h-full object-contain"
-                      />
-                    ) : (
-                      <span className="meta">composite not available for this pair</span>
-                    )}
+                <div>
+                  <div className="border border-white/[0.08] overflow-hidden">
+                    <div className="p-3 border-b border-white/[0.08] flex items-center justify-between text-xs font-mono text-neutral-400">
+                      <span className="text-[#ff6a00]">LATEST CAPTURE</span>
+                      {afterAsset?.uploaded_at && <span>{shortDate(afterAsset.uploaded_at)}</span>}
+                    </div>
+                    <div className="aspect-[16/10] bg-black">
+                      <img src={result.after_url} alt="Latest capture" className="w-full h-full object-cover" />
+                    </div>
                   </div>
-                  <p className="meta text-center">
-                    Layer transform dynamically rendered via Cloudinary multi-image overlay
-                  </p>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
-            <p className="label">
-              composite built with <span className="value normal-case">Cloudinary layer transforms</span>
-            </p>
-          </>
+            {/* Composite View */}
+            {mode === 'composite' && (
+              <div className="space-y-2 border border-white/[0.08] p-4 bg-black">
+                <div className="aspect-[16/10] flex items-center justify-center">
+                  {result.composite_url ? (
+                    <img src={result.composite_url} alt="Cloudinary composite overlay" className="max-h-full max-w-full object-contain" />
+                  ) : (
+                    <span className="text-xs font-mono text-neutral-600">Composite layer overlay not available</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         );
       })()}
 
       <Modal
         open={picking}
         onClose={() => setPicking(false)}
-        title="Choose comparison pair"
+        title="Custom Comparison Pair"
         width="max-w-xl"
         footer={
           <>
-            <button
-              type="button"
-              onClick={() => setPicking(false)}
-              className="btn btn-secondary"
-            >
-              Cancel
+            <button type="button" onClick={() => setPicking(false)} className="btn btn-secondary font-mono text-xs">
+              CANCEL
             </button>
             <button
               type="button"
               disabled={!pair.before || !pair.after || pair.before === pair.after}
-              className="btn btn-primary"
+              className="btn btn-primary font-mono text-xs"
               onClick={() => {
                 mutation.mutate({
                   before_asset_id: pair.before ?? undefined,
@@ -538,28 +470,27 @@ function ProgressionPanel({
                 setPicking(false);
               }}
             >
-              Compare pair
+              COMPARE PAIR →
             </button>
           </>
         }
       >
-        <div className="p-4 space-y-4">
-          <p className="text-[12.5px] text-ink-2 leading-relaxed">
-            Leave a side empty to fall back to the earliest and latest capture. Picking an explicit
-            pair is how you isolate a single stage of works.
+        <div className="space-y-4">
+          <p className="text-xs text-neutral-400 leading-relaxed">
+            Select two specific captures to isolate a specific progression milestone.
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label htmlFor="pair-before" className="label block mb-1.5">
-                Baseline
+              <label htmlFor="pair-before" className="font-mono text-[10.5px] uppercase tracking-wider text-neutral-400 block mb-1">
+                Baseline Capture
               </label>
               <select
                 id="pair-before"
-                className="field field-sm"
+                className="field"
                 value={pair.before ?? ''}
                 onChange={(e) => setPair((p) => ({ ...p, before: e.target.value || null }))}
               >
-                <option value="">automatic (earliest)</option>
+                <option value="">Automatic (Earliest)</option>
                 {comparable.map((a) => (
                   <option key={a.id} value={a.id}>
                     {shortDate(a.uploaded_at)} - {humanizeToken(a.activity)}
@@ -568,16 +499,16 @@ function ProgressionPanel({
               </select>
             </div>
             <div>
-              <label htmlFor="pair-after" className="label block mb-1.5">
-                Current
+              <label htmlFor="pair-after" className="font-mono text-[10.5px] uppercase tracking-wider text-neutral-400 block mb-1">
+                Current Capture
               </label>
               <select
                 id="pair-after"
-                className="field field-sm"
+                className="field"
                 value={pair.after ?? ''}
                 onChange={(e) => setPair((p) => ({ ...p, after: e.target.value || null }))}
               >
-                <option value="">automatic (latest)</option>
+                <option value="">Automatic (Latest)</option>
                 {comparable.map((a) => (
                   <option key={a.id} value={a.id}>
                     {shortDate(a.uploaded_at)} - {humanizeToken(a.activity)}
@@ -593,7 +524,7 @@ function ProgressionPanel({
 }
 
 /* ------------------------------------------------------------------ */
-/* Page                                                                */
+/* Project Detail Main Component                                      */
 /* ------------------------------------------------------------------ */
 
 export default function ProjectDetail() {
@@ -609,11 +540,14 @@ export default function ProjectDetail() {
   const clearChat = useClearProjectChat(projectId);
   const reportMutation = useGenerateProjectReport(projectId);
   const deleteMutation = useDeleteProject();
+  const deleteMediaMutation = useDeleteMedia();
 
   const [tab, setTab] = useState<TabId>('overview');
   const [draft, setDraft] = useState('');
   const [detail, setDetail] = useState<ChatEvidenceItem | null>(null);
+  const [assetToDelete, setAssetToDelete] = useState<{ id: string; url?: string; description?: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const assets = (media ?? []).filter((a) => a.project_id === projectId);
@@ -623,7 +557,6 @@ export default function ProjectDetail() {
     .filter((c): c is number => typeof c === 'number' && c > 0);
   const meanConfidence = scored.length ? scored.reduce((x, y) => x + y, 0) / scored.length : null;
   const readyCount = assets.filter((a) => a.processing_status === 'READY').length;
-  const verifiedShare = assets.length ? readyCount / assets.length : 0;
 
   useEffect(() => {
     if (tab === 'ask' && scrollRef.current) {
@@ -633,24 +566,23 @@ export default function ProjectDetail() {
 
   if (pLoading) {
     return (
-      <div className="p-4 lg:p-6 space-y-4" aria-busy="true" aria-label="Loading project">
-        <Skeleton className="h-9 w-40" />
-        <Skeleton className="h-28" />
-        <Skeleton className="h-96" />
+      <div className="p-6 lg:p-12 space-y-8 max-w-6xl mx-auto" aria-busy="true" aria-label="Loading workspace">
+        <div className="h-4 w-32 bg-white/[0.04] animate-pulse" />
+        <div className="h-16 w-3/4 bg-white/[0.04] animate-pulse" />
+        <div className="h-96 w-full bg-white/[0.03] animate-pulse" />
       </div>
     );
   }
 
   if (pError || !project) {
     return (
-      <div className="p-4 lg:p-6 space-y-4">
+      <div className="p-8 max-w-4xl mx-auto space-y-4">
         <ErrorState
-          title="Target not found"
-          detail="This project could not be loaded. It may have been deleted."
+          title="Project Workspace Not Found"
+          detail="This project workspace could not be loaded or may have been deleted."
         />
-        <Link to="/projects" className="btn btn-secondary">
-          <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-          Back to targets
+        <Link to="/projects" className="btn btn-secondary font-mono text-xs">
+          ← BACK TO PROJECTS
         </Link>
       </div>
     );
@@ -663,349 +595,294 @@ export default function ProjectDetail() {
   };
 
   return (
-    <div className="p-4 lg:p-6 space-y-4">
-      {/* Breadcrumb */}
-      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5">
-        <Link to="/projects" className="btn btn-sm btn-ghost -ml-2">
-          <ArrowLeft className="w-3 h-3" aria-hidden="true" />
-          Targets
-        </Link>
-      </nav>
-
-      {/* Identity */}
-      <header className="panel px-5 py-4">
-        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="text-[22px] font-semibold tracking-tight text-ink leading-tight">
-              {project.name}
-            </h1>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-2">
-              {project.location_name && (
-                <span className="flex items-center gap-1.5 text-[12.5px] text-ink-2">
-                  <MapPin className="w-3.5 h-3.5 text-ink-3" aria-hidden="true" />
-                  {project.location_name}
-                </span>
-              )}
-              {project.latitude != null && (
-                <Coordinate lat={project.latitude} lng={project.longitude} />
-              )}
-            </div>
-            {project.description && (
-              <p className="text-[13px] text-ink-2 leading-relaxed mt-3 max-w-3xl">
-                {project.description}
-              </p>
-            )}
-            {project.tags.length > 0 && (
-              <ul className="flex flex-wrap gap-1 mt-3">
-                {project.tags.map((tag) => (
-                  <li key={tag}>
-                    <Chip>{humanizeToken(tag)}</Chip>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
+    <div className="p-6 sm:p-10 lg:p-14 space-y-12 max-w-6xl mx-auto">
+      {/* Editorial Header */}
+      <section className="space-y-6">
+        <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+          <Link
+            to="/projects"
+            className="text-xs font-mono text-neutral-500 hover:text-white transition-colors"
+          >
+            ← ALL PROJECTS
+          </Link>
           <button
             type="button"
             onClick={() => setConfirmDelete(true)}
-            className="btn btn-danger flex-shrink-0 self-start"
+            className="text-xs font-mono text-neutral-600 hover:text-red-400 transition-colors"
+            title="Delete workspace"
           >
-            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-            Delete target
+            DELETE WORKSPACE
           </button>
         </div>
 
-        {/* Readouts */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 rule-t">
-          <div>
-            <span className="label">Captures</span>
-            <div className="value text-[20px] font-semibold mt-1">{assets.length}</div>
+        <div>
+          <p className="text-[10px] font-mono tracking-widest text-[#ff6a00] uppercase font-bold">
+            01 // WORKSPACE TARGET
+          </p>
+          <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-white uppercase mt-1">
+            {project.name}
+          </h1>
+
+          <div className="flex flex-wrap items-center gap-4 text-xs font-mono text-neutral-400 mt-3">
+            {project.location_name && (
+              <span className="flex items-center gap-1.5 text-neutral-300">
+                <MapPin className="w-3.5 h-3.5 text-[#ff6a00]" />
+                <span>{project.location_name}</span>
+              </span>
+            )}
+            <Coordinate lat={project.latitude} lng={project.longitude} />
+            <span>·</span>
+            <span>{assets.length} CAPTURES ({readyCount} VERIFIED)</span>
           </div>
-          <div>
-            <span className="label">Verified</span>
-            <div className="value text-[20px] font-semibold text-ok-600 mt-1">{readyCount}</div>
-          </div>
-          <div>
-            <span className="label">Mean confidence</span>
-            <div className="mt-1">
-              <ScoreReadout score={meanConfidence} />
+
+          {project.description && (
+            <p className="text-[14px] text-neutral-300 leading-relaxed mt-4 max-w-3xl">
+              {project.description}
+            </p>
+          )}
+
+          {project.tags.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-4">
+              {project.tags.map((tag) => (
+                <span key={tag} className="text-xs font-mono border border-white/[0.12] px-2 py-0.5 text-neutral-300 uppercase">
+                  {tag}
+                </span>
+              ))}
             </div>
-          </div>
-          <div>
-            <span className="label">Coverage</span>
-            <div className="mt-2">
-              <Meter
-                value={verifiedShare}
-                tone={verifiedShare >= 0.6 ? 'ok' : 'brand'}
-                label={`${Math.round(verifiedShare * 100)} percent verified`}
-              />
-            </div>
-          </div>
+          )}
         </div>
-      </header>
 
-      {/* Tabs */}
-      <div className="panel px-2 py-1.5 flex items-center gap-1 overflow-x-auto">
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => setTab(item.id)}
-            aria-current={tab === item.id ? 'page' : undefined}
-            className={`label px-2.5 py-1.5 rounded-[var(--radius-control)] whitespace-nowrap transition-colors ${
-              tab === item.id
-                ? 'bg-brand-600 text-white'
-                : 'text-ink-2 hover:bg-sunken hover:text-ink'
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+        {/* Minimal Typographic Tabs Rail */}
+        <div className="flex items-center gap-6 border-b border-white/[0.08] overflow-x-auto pt-4">
+          {TABS.map((item) => {
+            const active = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setTab(item.id)}
+                className={clsx(
+                  'pb-3 font-mono text-xs tracking-wider transition-colors whitespace-nowrap relative uppercase',
+                  active
+                    ? 'text-white font-bold after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-[#ff6a00]'
+                    : 'text-neutral-500 hover:text-neutral-300',
+                )}
+              >
+                <span>{item.number} / {item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
-      {/* OVERVIEW */}
+      {/* OVERVIEW TAB */}
       {tab === 'overview' && (
-        <div className="space-y-4">
-          <ActivityDensity assets={assets} />
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <section className="panel">
-              <PanelHeader
-                title="Recent evidence"
-                meta={`${described.length} described of ${assets.length} captures`}
-                actions={
-                  <button type="button" onClick={() => setTab('media')} className="btn btn-sm btn-ghost">
-                    Open library
-                  </button>
-                }
-              />
-              {mLoading ? (
-                <div className="p-4 space-y-2">
-                  {[0, 1, 2].map((i) => (
-                    <Skeleton key={i} className="h-12" />
-                  ))}
-                </div>
-              ) : described.length === 0 ? (
-                <EmptyState
-                  icon={Images}
-                  title="No evidence yet"
-                  description="Uploads routed to this target will appear here."
-                />
-              ) : (
-                <ul>
-                  {described.slice(0, 5).map((asset) => {
-                    const s = statusOf(asset);
-                    return (
-                      <li
-                        key={asset.id}
-                        className="flex items-center gap-3 px-4 py-2.5 rule-b last:border-b-0 row-hover"
-                      >
-                        <img
-                          src={asset.cloudinary_url ?? ''}
-                          alt=""
-                          loading="lazy"
-                          decoding="async"
-                          className="w-10 h-10 object-cover border border-line bg-sunken flex-shrink-0"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[12.5px] text-ink truncate">{asset.description}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <Chip className={s.chip}>{s.label}</Chip>
-                            <span className="meta">{relativeTime(asset.uploaded_at)}</span>
-                          </div>
-                        </div>
-                        <ScoreReadout score={asset.routing_confidence} className="flex-shrink-0" />
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </section>
-
-            <section className="panel">
-              <PanelHeader title="Milestone timeline" meta={`${timeline?.length ?? 0} entries`} />
-              {tLoading ? (
-                <div className="p-4 space-y-2">
-                  {[0, 1, 2].map((i) => (
-                    <Skeleton key={i} className="h-10" />
-                  ))}
-                </div>
-              ) : (timeline?.length ?? 0) === 0 ? (
-                <EmptyState
-                  icon={Clock}
-                  title="Timeline is empty"
-                  description="Milestones appear automatically as evidence is ingested."
-                />
-              ) : (
-                <ul>
-                  {timeline?.slice(0, 5).map((item, index) => (
-                    <li
-                      key={item.asset_id ?? index}
-                      className="flex items-baseline gap-3 px-4 py-2.5 rule-b last:border-b-0"
-                    >
-                      <span className="value text-[11px] text-ink-3 w-[68px] flex-shrink-0">
-                        {shortDate(item.date).replace(/,.*/, '')}
-                      </span>
-                      <span className="text-[12.5px] text-ink-2 truncate flex-1">
-                        {humanizeToken(item.activity)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
+        <div className="space-y-12">
+          {/* Typographic Telemetry */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 py-6 border-b border-white/[0.08]">
+            <div>
+              <div className="text-3xl font-light font-sans text-white">{assets.length}</div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-neutral-500 mt-1">
+                INDEXED CAPTURES
+              </div>
+            </div>
+            <div>
+              <div className="text-3xl font-light font-sans text-white">{readyCount}</div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-[#ff6a00] mt-1 font-bold">
+                VERIFIED EVIDENCE
+              </div>
+            </div>
+            <div>
+              <div className="text-3xl font-light font-sans text-white">
+                {meanConfidence != null ? `${(meanConfidence * 100).toFixed(1)}%` : '—'}
+              </div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-neutral-500 mt-1">
+                MEAN CONFIDENCE
+              </div>
+            </div>
+            <div>
+              <div className="text-3xl font-light font-sans text-white">
+                {timeline?.length ?? 0}
+              </div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-neutral-500 mt-1">
+                CHRONOLOGY MILESTONES
+              </div>
+            </div>
           </div>
 
-          <section className="panel p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <button type="button" onClick={() => setTab('change')} className="text-left group">
-              <span className="label">Progression</span>
-              <p className="text-[13px] text-ink mt-1.5 group-hover:text-brand-700 transition-colors">
-                Compare baseline against the most recent capture.
-              </p>
-            </button>
-            <button type="button" onClick={() => setTab('ask')} className="text-left group">
-              <span className="label">Ask</span>
-              <p className="text-[13px] text-ink mt-1.5 group-hover:text-brand-700 transition-colors">
-                Query this project's evidence with grounded reasoning.
-              </p>
-            </button>
-            <button type="button" onClick={() => setTab('report')} className="text-left group">
-              <span className="label">Report</span>
-              <p className="text-[13px] text-ink mt-1.5 group-hover:text-brand-700 transition-colors">
-                Generate a printable impact and audit record.
-              </p>
-            </button>
+          {/* Temporal Density Analysis */}
+          <section className="space-y-3">
+            <h2 className="text-xs font-mono uppercase tracking-widest text-neutral-400">
+              ACTIVITY DENSITY
+            </h2>
+            <ActivityDensity assets={assets} />
+          </section>
+
+          {/* Featured Evidence Peeks */}
+          <section className="space-y-4">
+            <div className="flex items-baseline justify-between border-b border-white/[0.08] pb-2">
+              <h2 className="text-xs font-mono uppercase tracking-widest text-neutral-400">
+                RECENT EVIDENCE
+              </h2>
+              <button
+                type="button"
+                onClick={() => setTab('media')}
+                className="text-xs font-mono text-neutral-500 hover:text-white transition-colors"
+              >
+                OPEN EVIDENCE GALLERY →
+              </button>
+            </div>
+
+            {described.length === 0 ? (
+              <EmptyState title="No evidence captures yet" />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                {described.slice(0, 3).map((asset) => (
+                  <div key={asset.id} className="space-y-2 group">
+                    <div className="aspect-[16/10] bg-black border border-white/[0.08] overflow-hidden">
+                      <img
+                        src={asset.cloudinary_url ?? ''}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                    </div>
+                    <p className="text-[13px] text-neutral-300 truncate">
+                      {asset.description}
+                    </p>
+                    <div className="flex items-center gap-2 text-xs font-mono text-neutral-500">
+                      <span>{relativeTime(asset.uploaded_at)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         </div>
       )}
 
-      {/* MEDIA */}
+      {/* MEDIA TAB */}
       {tab === 'media' && (
-        <div className="space-y-3">
+        <div className="space-y-6">
+          <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+            <div>
+              <h2 className="text-xs font-mono uppercase tracking-widest text-[#ff6a00] font-bold">
+                02 // WORKSPACE EVIDENCE CORPUS ({assets.length})
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setUploadOpen(true)}
+              className="btn btn-sm btn-primary font-mono text-xs"
+            >
+              UPLOAD PHOTOS →
+            </button>
+          </div>
+
           {mLoading ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3" aria-busy="true">
-              {Array.from({ length: 4 }, (_, i) => (
-                <Skeleton key={i} className="aspect-[4/3]" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="aspect-[16/10] bg-white/[0.02] animate-pulse" />
               ))}
             </div>
           ) : assets.length === 0 ? (
-            <div className="panel">
-              <EmptyState
-                icon={Images}
-                title="No captures routed here"
-                description="Nothing has been attributed to this target yet. Pending captures sit in the review queue."
-                action={
-                  <Link to="/review" className="btn btn-secondary">
-                    Open review queue
-                  </Link>
-                }
-              />
-            </div>
+            <EmptyState
+              title="No Captures Routed to Workspace"
+              description="No field evidence has been attributed to this project yet."
+              action={
+                <button
+                  type="button"
+                  onClick={() => setUploadOpen(true)}
+                  className="btn btn-primary font-mono text-xs"
+                >
+                  UPLOAD PHOTOS →
+                </button>
+              }
+            />
           ) : (
-            <ul className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
               {assets.map((asset) => {
                 const s = statusOf(asset);
                 return (
-                  <li key={asset.id} className="panel overflow-hidden flex flex-col">
-                    <div className="relative aspect-[4/3] bg-sunken">
-                      {asset.cloudinary_url && (
+                  <div key={asset.id} className="space-y-2.5 group">
+                    <div
+                      className="relative aspect-[16/10] bg-black border border-white/[0.08] overflow-hidden cursor-pointer"
+                      onClick={() => setDetail({
+                        asset_id: asset.id,
+                        cloudinary_url: asset.cloudinary_url ?? '',
+                        description: asset.description ?? '',
+                        activity: asset.activity,
+                      })}
+                    >
+                      {asset.cloudinary_url ? (
                         <img
                           src={asset.cloudinary_url}
-                          alt={asset.description ?? 'Routed capture'}
+                          alt={asset.description ?? 'Capture'}
                           loading="lazy"
                           decoding="async"
-                          className="absolute inset-0 w-full h-full object-cover"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center font-mono text-xs text-neutral-600">
+                          NO PREVIEW
+                        </div>
                       )}
-                      <span className="absolute top-1.5 left-1.5">
-                        <Chip className={s.chip}>{s.label}</Chip>
+                      <span className="absolute top-2 left-2 px-2 py-0.5 bg-black/90 text-[9.5px] font-mono text-[#ff6a00] border border-[#ff6a00]/40 uppercase">
+                        {s.label}
                       </span>
                     </div>
-                    <div className="p-2.5 flex-1 flex flex-col gap-1.5">
-                      <p className="text-[12px] text-ink leading-snug line-clamp-2 min-h-[2.1em]">
+                    <div>
+                      <p className="text-[13px] text-white leading-snug line-clamp-2">
                         {asset.description || humanizeToken(asset.activity)}
                       </p>
-                      <Coordinate lat={asset.image_latitude} lng={asset.image_longitude} />
-                      <div className="flex items-center justify-between gap-2 mt-auto pt-1.5 rule-t">
-                        <ScoreReadout score={asset.routing_confidence} />
-                        <span className="meta">{shortDate(asset.uploaded_at)}</span>
+                      <div className="flex items-center justify-between text-[11px] font-mono text-neutral-500 mt-1">
+                        <Coordinate lat={asset.image_latitude} lng={asset.image_longitude} />
+                        <span>{shortDate(asset.uploaded_at)}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1 mt-1 border-t border-white/[0.06] text-xs font-mono">
+                        <span className="text-[10px] text-neutral-600 truncate max-w-[100px]">{asset.id.slice(0, 8)}...</span>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setDetail({
+                              asset_id: asset.id,
+                              cloudinary_url: asset.cloudinary_url ?? '',
+                              description: asset.description ?? '',
+                              activity: asset.activity,
+                            })}
+                            className="text-neutral-400 hover:text-white transition-colors"
+                          >
+                            INSPECT →
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAssetToDelete({
+                                id: asset.id,
+                                url: asset.cloudinary_url ?? undefined,
+                                description: asset.description || asset.activity || undefined,
+                              });
+                            }}
+                            className="text-neutral-600 hover:text-red-400 transition-colors flex items-center gap-1"
+                            title="Delete media capture"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>DELETE</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </li>
+                  </div>
                 );
               })}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {/* TIMELINE */}
-      {tab === 'timeline' && (
-        <div className="panel">
-          <PanelHeader
-            title="Evidence timeline"
-            meta="ordered by capture date, oldest first"
-            actions={
-              <Link to="/reports" className="btn btn-sm btn-ghost">
-                <FileText className="w-3 h-3" aria-hidden="true" />
-                Full report
-              </Link>
-            }
-          />
-          {tLoading ? (
-            <div className="p-4 space-y-3" aria-busy="true">
-              {[0, 1, 2].map((i) => (
-                <Skeleton key={i} className="h-16" />
-              ))}
             </div>
-          ) : (timeline?.length ?? 0) === 0 ? (
-            <EmptyState
-              icon={Clock}
-              title="No milestones recorded"
-              description="Milestones are generated automatically from routed evidence."
-            />
-          ) : (
-            <ol className="px-4 py-4">
-              {timeline?.map((item, index) => (
-                <li key={item.asset_id ?? index} className="flex gap-3.5 pb-4 last:pb-0">
-                  <div className="flex flex-col items-center flex-shrink-0 w-[72px]">
-                    <span className="value text-[11px] text-ink-2">
-                      {shortDate(item.date).replace(/,.*/, '')}
-                    </span>
-                    <span className="value text-[10px] text-ink-3">
-                      {new Date(item.date).getFullYear()}
-                    </span>
-                    {index !== (timeline?.length ?? 0) - 1 && (
-                      <span className="w-px flex-1 bg-line mt-1.5" aria-hidden="true" />
-                    )}
-                  </div>
-                  {item.cloudinary_url && (
-                    <img
-                      src={item.cloudinary_url}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      className="w-16 h-16 object-cover border border-line bg-sunken flex-shrink-0"
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    {item.activity && <Chip className="chip-brand">{humanizeToken(item.activity)}</Chip>}
-                    {item.description && (
-                      <p className="text-[12.5px] text-ink-2 leading-relaxed mt-1.5">
-                        {item.description}
-                      </p>
-                    )}
-                    {item.location && <p className="meta mt-1">{item.location}</p>}
-                  </div>
-                </li>
-              ))}
-            </ol>
           )}
         </div>
       )}
 
-      {/* CHANGE */}
+      {/* PROGRESSION TAB */}
       {tab === 'change' && (
         <ProgressionPanel
           projectId={projectId!}
@@ -1014,310 +891,480 @@ export default function ProjectDetail() {
         />
       )}
 
-      {/* ASK */}
+      {/* INTELLIGENCE / RAG CHAT TAB */}
       {tab === 'ask' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 panel flex flex-col min-h-[520px]">
-            <PanelHeader
-              title="Grounded question answering"
-              meta="answers cite the captures they were derived from"
-              actions={
-                (history?.length ?? 0) > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => clearChat.mutate()}
-                    disabled={clearChat.isPending}
-                    className="btn btn-sm btn-ghost"
-                  >
-                    <Eraser className="w-3 h-3" aria-hidden="true" />
-                    Clear
-                  </button>
-                ) : undefined
-              }
-            />
-
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-              {hLoading ? (
-                <div className="space-y-3" aria-busy="true">
-                  <Skeleton className="h-12 w-2/3" />
-                  <Skeleton className="h-24 w-full" />
-                </div>
-              ) : (history?.length ?? 0) === 0 ? (
-                <EmptyState
-                  icon={MessageSquare}
-                  title="No conversation yet"
-                  description="Ask about progress, safety or site conditions. Every answer is grounded in this project's captures only."
-                />
-              ) : (
-                history!.map((message) => (
-                  <div key={message.id} className="space-y-2">
-                    <ChatMessageRenderer message={message.message} role={message.role} />
-                    {message.evidence && message.evidence.length > 0 && (
-                      <ul className="flex flex-wrap gap-2 pl-1">
-                        {message.evidence.map((item) => (
-                          <li key={item.asset_id}>
-                            <button
-                              type="button"
-                              onClick={() => setDetail(item)}
-                              className="flex items-center gap-2 panel px-2 py-1.5 hover:border-brand-300 transition-colors text-left"
-                            >
-                              <img
-                                src={item.cloudinary_url}
-                                alt=""
-                                loading="lazy"
-                                decoding="async"
-                                className="w-8 h-8 object-cover border border-line bg-sunken"
-                              />
-                              <span className="text-[11px] text-ink-2 line-clamp-1 max-w-[160px]">
-                                {item.description}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                ))
-              )}
-
-              {chatMutation.isPending && (
-                <div className="flex items-center gap-2" aria-live="polite">
-                  <span
-                    className="w-3.5 h-3.5 border-2 border-line-strong border-t-brand-600 rounded-full animate-spin"
-                    aria-hidden="true"
-                  />
-                  <span className="label">Reasoning over evidence</span>
-                </div>
-              )}
-
-              {chatMutation.isError && (
-                <ErrorState title="Question failed" detail="The assistant request did not complete." />
-              )}
+        <div className="space-y-8">
+          <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+            <div>
+              <h2 className="text-xs font-mono uppercase tracking-widest text-[#ff6a00] font-bold">
+                04 // LOCAL LLM RAG ASSISTANT
+              </h2>
+              <p className="text-xs text-neutral-500 font-mono mt-0.5">
+                Strict project-isolated visual evidence synthesis
+              </p>
             </div>
-
-            <form
-              className="p-3 rule-t flex items-end gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                send();
-              }}
-            >
-              <div className="flex-1">
-                <label htmlFor="chat-input" className="sr-only">
-                  Ask about this project
-                </label>
-                <textarea
-                  id="chat-input"
-                  rows={2}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      send();
-                    }
-                  }}
-                  placeholder="What safety controls are visible on site?"
-                  className="field resize-none"
-                />
-              </div>
+            {(history?.length ?? 0) > 0 && (
               <button
-                type="submit"
-                disabled={!draft.trim() || chatMutation.isPending}
-                className="btn btn-primary h-[38px]"
+                type="button"
+                onClick={() => clearChat.mutate()}
+                disabled={clearChat.isPending}
+                className="text-xs font-mono text-neutral-500 hover:text-white transition-colors"
               >
-                <Send className="w-3.5 h-3.5" aria-hidden="true" />
-                Ask
+                CLEAR SESSION
               </button>
-            </form>
+            )}
           </div>
 
-          <aside className="space-y-4">
-            <section className="panel">
-              <PanelHeader title="Grounding" meta="what the answer can draw on" />
-              <dl className="p-4 space-y-2.5">
-                <div className="flex items-baseline justify-between gap-3">
-                  <dt className="label">Citable captures</dt>
-                  <dd className="value text-[13px]">{described.length}</dd>
+          <div ref={scrollRef} className="space-y-6 max-h-[600px] overflow-y-auto">
+            {hLoading ? (
+              <div className="space-y-4" aria-busy="true">
+                <div className="h-16 bg-white/[0.02] animate-pulse" />
+                <div className="h-24 bg-white/[0.02] animate-pulse" />
+              </div>
+            ) : (history?.length ?? 0) === 0 ? (
+              <div className="py-16 text-center text-neutral-500 font-mono text-xs">
+                Inquire about construction progress, equipment, materials, or safety.
+              </div>
+            ) : (
+              history!.map((message) => (
+                <div key={message.id} className="space-y-2">
+                  <ChatMessageRenderer message={message.message} role={message.role} />
+                  {message.evidence && message.evidence.length > 0 && (
+                    <div className="pl-4 space-y-1.5 pt-1">
+                      <span className="font-mono text-[10px] uppercase tracking-widest text-[#ff6a00] block">
+                        CITED EVIDENCE ({message.evidence.length})
+                      </span>
+                      <div className="flex flex-wrap gap-3">
+                        {message.evidence.map((item) => (
+                          <button
+                            key={item.asset_id}
+                            type="button"
+                            onClick={() => setDetail(item)}
+                            className="flex items-center gap-2.5 p-2 bg-black border border-white/[0.1] hover:border-white/40 transition-colors text-left group"
+                          >
+                            <img
+                              src={item.cloudinary_url}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              className="w-10 h-10 object-cover bg-black"
+                            />
+                            <span className="text-xs font-mono text-neutral-300 group-hover:text-white truncate max-w-[180px]">
+                              {item.description}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-baseline justify-between gap-3">
-                  <dt className="label">Mean confidence</dt>
-                  <dd>
-                    <ScoreReadout score={meanConfidence} />
-                  </dd>
-                </div>
-                <div className="flex items-baseline justify-between gap-3">
-                  <dt className="label">Scope</dt>
-                  <dd className="value text-[12px] text-ink-2 text-right">
-                    this target only
-                  </dd>
-                </div>
-              </dl>
-            </section>
+              ))
+            )}
 
-            <p className="flex items-start gap-2 text-[11.5px] text-ink-3 leading-relaxed">
-              <Sparkles className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden="true" />
-              <span>
-                Answers are generated locally from retrieved evidence. When the record is thin the
-                model says so rather than guessing.
-              </span>
-            </p>
-          </aside>
+            {chatMutation.isPending && (
+              <div className="flex items-center gap-3 py-4 text-xs font-mono text-neutral-400" aria-live="polite">
+                <div className="w-4 h-4 border border-[#ff6a00] border-t-transparent animate-spin rounded-full" />
+                <span>Reasoning over project evidence records...</span>
+              </div>
+            )}
+
+            {chatMutation.isError && (
+              <ErrorState title="Inference request failed" detail="Please check local LLM status." />
+            )}
+          </div>
+
+          {/* Clean Prompt Input */}
+          <form
+            className="pt-4 border-t border-white/[0.08] flex items-end gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              send();
+            }}
+          >
+            <textarea
+              rows={2}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              placeholder="Ask anything about this project workspace..."
+              className="field flex-1 resize-none text-[13.5px]"
+            />
+            <button
+              type="submit"
+              disabled={!draft.trim() || chatMutation.isPending}
+              className="btn btn-primary h-11 px-6 font-mono text-xs"
+            >
+              ASK →
+            </button>
+          </form>
         </div>
       )}
 
-      {/* REPORT */}
-      {tab === 'report' && (
-        <div className="space-y-3">
-          <div className="panel p-3 flex flex-wrap items-center gap-3">
-            <div className="flex-1 min-w-[200px]">
-              <span className="label">Audit record</span>
-              <p className="text-[12.5px] text-ink-2 mt-1">
-                Synthesises every routed capture into a printable impact statement.
-              </p>
+      {/* TIMELINE TAB */}
+      {tab === 'timeline' && (
+        <div className="space-y-6">
+          <div className="border-b border-white/[0.08] pb-3">
+            <h2 className="text-xs font-mono uppercase tracking-widest text-[#ff6a00] font-bold">
+              05 // CHRONOLOGY LEDGER
+            </h2>
+          </div>
+
+          {tLoading ? (
+            <div className="space-y-4">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="h-16 bg-white/[0.02] animate-pulse" />
+              ))}
             </div>
-            <button
-              type="button"
-              onClick={() => reportMutation.mutate()}
-              disabled={reportMutation.isPending}
-              className="btn btn-primary"
-            >
-              <FileText className="w-3.5 h-3.5" aria-hidden="true" />
-              {reportMutation.isPending ? 'Generating' : 'Generate report'}
-            </button>
-            <Link to="/reports" className="btn btn-secondary">
-              Open reports
-            </Link>
+          ) : (timeline?.length ?? 0) === 0 ? (
+            <EmptyState title="No timeline entries logged yet" />
+          ) : (
+            <div className="border-t border-white/[0.08] divide-y divide-white/[0.08]">
+              {timeline?.map((item, index) => (
+                <div key={item.asset_id ?? index} className="flex items-baseline py-4 px-2 hover:bg-white/[0.015] transition-colors gap-6">
+                  <span className="font-mono text-xs text-neutral-500 w-24 flex-shrink-0">
+                    {shortDate(item.date)}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-base text-white font-normal uppercase font-mono">
+                      {humanizeToken(item.activity)}
+                    </span>
+                    {item.description && (
+                      <p className="text-[13px] text-neutral-400 mt-0.5 leading-relaxed font-sans">
+                        {item.description}
+                      </p>
+                    )}
+                  </div>
+                  {item.cloudinary_url && (
+                    <img
+                      src={item.cloudinary_url}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      className="w-14 h-14 object-cover border border-white/[0.08] flex-shrink-0"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* REPORT TAB */}
+      {tab === 'report' && (
+        <div className="space-y-8">
+          <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+            <div>
+              <h2 className="text-xs font-mono uppercase tracking-widest text-[#ff6a00] font-bold">
+                06 // EXECUTIVE IMPACT STATEMENT
+              </h2>
+            </div>
+            <div className="flex items-center gap-3">
+              <Link
+                to="/reports"
+                className="btn btn-sm btn-secondary font-mono text-xs"
+              >
+                FULL DOSSIER VIEW ↗
+              </Link>
+              <button
+                type="button"
+                onClick={() => reportMutation.mutate()}
+                disabled={reportMutation.isPending}
+                className="btn btn-sm btn-primary font-mono text-xs"
+              >
+                {reportMutation.isPending ? 'GENERATING...' : 'GENERATE DOSSIER →'}
+              </button>
+            </div>
           </div>
 
           {reportMutation.isError && (
             <ErrorState
-              title="Report failed"
-              detail="The audit request did not complete."
+              title="Report synthesis failed"
+              detail="The audit statement request could not be completed."
               onRetry={() => reportMutation.mutate()}
             />
           )}
 
-          {reportMutation.data && (
-            <div className="panel p-5 space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-[17px] font-semibold text-ink">
-                    {reportMutation.data.project_name}
-                  </h3>
-                  <p className="meta mt-1">generated {stamp(reportMutation.data.generated_at)}</p>
-                </div>
-                <Chip
-                  className={
-                    reportMutation.data.current_status.startsWith('ON TRACK')
-                      ? 'chip-ok'
-                      : 'chip-caution'
-                  }
-                >
-                  {reportMutation.data.current_status.startsWith('ON TRACK') ? 'on track' : 'at risk'}
-                </Chip>
-              </div>
-
-              <p className="text-[13px] text-ink-2 leading-relaxed">
-                {reportMutation.data.current_status}
-              </p>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 rule-t">
-                <div>
-                  <span className="label">Evidence</span>
-                  <div className="value text-[18px] font-semibold mt-1">
-                    {reportMutation.data.total_evidence_count}
-                  </div>
-                </div>
-                <div>
-                  <span className="label">Timeline</span>
-                  <div className="value text-[18px] font-semibold mt-1">
-                    {reportMutation.data.timeline_summary.length}
-                  </div>
-                </div>
-                <div>
-                  <span className="label">Change</span>
-                  <div className="value text-[18px] font-semibold mt-1">
-                    {reportMutation.data.change_score?.toFixed(3) ?? 'n/a'}
-                  </div>
-                </div>
-                <div>
-                  <span className="label">Cited</span>
-                  <div className="value text-[18px] font-semibold mt-1">
-                    {reportMutation.data.key_evidence.length}
-                  </div>
-                </div>
-              </div>
-
-              {reportMutation.data.key_evidence.length > 0 && (
-                <div className="pt-3 rule-t">
-                  <span className="label">Cited evidence</span>
-                  <ul className="mt-2 space-y-1.5">
-                    {reportMutation.data.key_evidence.map((item) => (
-                      <li key={item.asset_id} className="flex items-baseline gap-2">
-                        <AssetId id={item.asset_id} className="flex-shrink-0" />
-                        <span className="text-[12px] text-ink-2 line-clamp-1">{item.description}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {described.length === 0 && (
-                <p className="flex items-start gap-2 text-[12px] text-caution-700 bg-caution-50 border border-caution-100 p-2.5">
-                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden="true" />
-                  This report is based on no described captures. Treat it as provisional.
-                </p>
-              )}
+          {reportMutation.isPending && (
+            <div className="py-16 flex flex-col items-center justify-center gap-3" aria-busy="true">
+              <div className="w-5 h-5 border border-[#ff6a00] border-t-transparent animate-spin rounded-full" />
+              <span className="font-mono text-xs uppercase tracking-widest text-neutral-400">
+                Synthesizing multi-modal evidence & generating audit record...
+              </span>
             </div>
           )}
+
+          {!reportMutation.isPending && reportMutation.data && (() => {
+            const r = reportMutation.data;
+            const isOnTrack = r.current_status.startsWith('ON TRACK');
+            return (
+              <div className="space-y-8 border border-white/[0.12] p-6 sm:p-8 bg-[#0a0a0a]">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-white/[0.08] pb-6">
+                  <div>
+                    <h3 className="text-2xl sm:text-3xl font-bold text-white font-sans uppercase tracking-tight">
+                      {r.project_name}
+                    </h3>
+                    <div className="flex flex-wrap items-center gap-3 font-mono text-xs text-neutral-400 mt-1">
+                      {r.location_name && (
+                        <span className="text-neutral-200 flex items-center gap-1 font-medium">
+                          <MapPin className="w-3.5 h-3.5 text-[#ff6a00]" />
+                          <span>{r.location_name}</span>
+                        </span>
+                      )}
+                      <span>GENERATED {stamp(r.generated_at)}</span>
+                      <span>·</span>
+                      <span>SCOPE: {r.project_id.slice(0, 12)}</span>
+                    </div>
+                  </div>
+                  <span
+                    className={`px-3 py-1 font-mono text-xs uppercase border ${
+                      isOnTrack
+                        ? 'border-white/40 bg-white/[0.06] text-white'
+                        : 'border-[#ff6a00]/50 bg-[#ff6a00]/10 text-[#ff6a00] font-bold'
+                    }`}
+                  >
+                    {isOnTrack ? '● STATUS: ON TRACK' : '▲ STATUS: REVIEW REQUIRED'}
+                  </span>
+                </div>
+
+                {/* Section: Observation Statement */}
+                <div className="space-y-2">
+                  <span className="text-[10px] font-mono tracking-widest text-[#ff6a00] uppercase font-bold">
+                    FIELD OBSERVATION STATEMENT
+                  </span>
+                  <div className="p-5 bg-[#111111] border border-white/[0.1] text-[14px] text-white leading-relaxed">
+                    {r.current_status}
+                  </div>
+                </div>
+
+                {/* Readouts Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-[#050505] border border-white/[0.08]">
+                  <div>
+                    <div className="text-2xl sm:text-3xl font-bold font-mono text-white">
+                      {r.total_evidence_count}
+                    </div>
+                    <div className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest mt-1">
+                      TOTAL EVIDENCE
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-2xl sm:text-3xl font-bold font-mono text-white">
+                      {r.timeline_summary.length}
+                    </div>
+                    <div className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest mt-1">
+                      MILESTONES
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-2xl sm:text-3xl font-bold font-mono text-[#ff6a00]">
+                      {r.change_score != null ? `${(r.change_score * 100).toFixed(1)}%` : 'N/A'}
+                    </div>
+                    <div className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest mt-1">
+                      STRUCTURAL DELTA
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-2xl sm:text-3xl font-bold font-mono text-white">
+                      {r.key_evidence.length}
+                    </div>
+                    <div className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest mt-1">
+                      CITED CAPTURES
+                    </div>
+                  </div>
+                </div>
+
+                {/* Progression Preview */}
+                {r.before_asset_url && r.after_asset_url && (
+                  <div className="space-y-3 pt-2">
+                    <span className="text-[10px] font-mono tracking-widest text-[#ff6a00] uppercase font-bold">
+                      VISUAL PROGRESSION ANCHOR
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="border border-white/[0.12] bg-[#080808] overflow-hidden">
+                        <div className="p-2 border-b border-white/[0.08] text-[10px] font-mono text-neutral-300 uppercase">
+                          BASELINE ANCHOR
+                        </div>
+                        <div className="aspect-[16/10] bg-black">
+                          <img src={r.before_asset_url} alt="Baseline capture" className="w-full h-full object-cover" />
+                        </div>
+                      </div>
+                      <div className="border border-white/[0.12] bg-[#080808] overflow-hidden">
+                        <div className="p-2 border-b border-white/[0.08] text-[10px] font-mono text-[#ff6a00] uppercase font-bold">
+                          CURRENT CAPTURE
+                        </div>
+                        <div className="aspect-[16/10] bg-black">
+                          <img src={r.after_asset_url} alt="Current capture" className="w-full h-full object-cover" />
+                        </div>
+                      </div>
+                    </div>
+                    {r.before_after_summary && (
+                      <p className="text-xs font-mono text-neutral-300 leading-relaxed">
+                        {r.before_after_summary}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Key Cited Evidence */}
+                {r.key_evidence.length > 0 && (
+                  <div className="space-y-3 pt-2">
+                    <span className="text-[10px] font-mono tracking-widest text-[#ff6a00] uppercase font-bold">
+                      CITED PRIMARY EVIDENCE ({r.key_evidence.length})
+                    </span>
+                    <div className="border-t border-white/[0.08] divide-y divide-white/[0.08]">
+                      {r.key_evidence.map((item, index) => (
+                        <div key={item.asset_id} className="py-3 px-1 flex items-start gap-4 hover:bg-white/[0.02] transition-colors">
+                          <span className="font-mono text-xs text-neutral-500 w-6 pt-0.5">
+                            #{String(index + 1).padStart(2, '0')}
+                          </span>
+                          <img
+                            src={item.cloudinary_url}
+                            alt=""
+                            loading="lazy"
+                            className="w-14 h-14 object-cover border border-white/[0.12] bg-black flex-shrink-0"
+                          />
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p className="text-xs text-white leading-snug">{item.description}</p>
+                            <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono text-neutral-400">
+                              {item.activity && <span>ACTIVITY: {humanizeToken(item.activity)}</span>}
+                              {item.timestamp && <span>{shortDate(item.timestamp)}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
-      {/* Keyed so switching evidence remounts the dialog with fresh tab and
-          clipboard state, instead of resetting it in an effect. */}
+      {/* Detail Dialog */}
       <EvidenceDialog
         key={detail?.asset_id ?? 'none'}
         item={detail}
         onClose={() => setDetail(null)}
+        onDelete={(id) => {
+          setAssetToDelete({
+            id,
+            url: detail?.cloudinary_url,
+            description: detail?.description,
+          });
+        }}
       />
 
+      {/* Media Delete Confirmation Modal */}
+      <Modal
+        open={assetToDelete != null}
+        onClose={() => setAssetToDelete(null)}
+        title="Delete Media Capture"
+        width="max-w-md"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setAssetToDelete(null)}
+              className="btn btn-secondary font-mono text-xs"
+            >
+              CANCEL
+            </button>
+            <button
+              type="button"
+              disabled={deleteMediaMutation.isPending}
+              onClick={() => {
+                if (!assetToDelete) return;
+                deleteMediaMutation.mutate(assetToDelete.id, {
+                  onSuccess: () => {
+                    if (detail?.asset_id === assetToDelete.id) {
+                      setDetail(null);
+                    }
+                    setAssetToDelete(null);
+                  },
+                });
+              }}
+              className="btn btn-danger font-mono text-xs"
+            >
+              {deleteMediaMutation.isPending ? 'DELETING...' : 'CONFIRM DELETE'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {assetToDelete && (
+            <div className="flex gap-4 items-start">
+              {assetToDelete.url && (
+                <img
+                  src={assetToDelete.url}
+                  alt=""
+                  className="w-20 h-20 object-cover border border-white/[0.12] bg-black flex-shrink-0"
+                />
+              )}
+              <div className="min-w-0 space-y-1">
+                <p className="text-xs font-mono text-white break-all">ID: {assetToDelete.id}</p>
+                {assetToDelete.description && (
+                  <p className="text-xs text-neutral-300 line-clamp-2">
+                    {assetToDelete.description}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+          <p className="text-xs text-neutral-400 leading-relaxed border-t border-white/[0.08] pt-3">
+            Are you sure you want to permanently delete this media capture? This will remove the visual asset and its AI embeddings from the project workspace.
+          </p>
+        </div>
+      </Modal>
+
+      {/* Delete Project Workspace Confirmation Modal */}
       <Modal
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
-        title="Delete routing target"
+        title="Delete Project Workspace"
         width="max-w-md"
         footer={
           <>
             <button
               type="button"
               onClick={() => setConfirmDelete(false)}
-              className="btn btn-secondary"
+              className="btn btn-secondary font-mono text-xs"
             >
-              Cancel
+              CANCEL
             </button>
             <button
               type="button"
               disabled={deleteMutation.isPending}
-              className="btn btn-danger"
+              className="btn btn-danger font-mono text-xs"
               onClick={() =>
                 deleteMutation.mutate(projectId!, { onSuccess: () => navigate('/projects') })
               }
             >
-              {deleteMutation.isPending ? 'Deleting' : 'Delete target'}
+              {deleteMutation.isPending ? 'DELETING...' : 'CONFIRM DELETE'}
             </button>
           </>
         }
       >
-        <div className="p-4 space-y-3">
-          <p className="text-[13px] text-ink-2">
-            <span className="value text-ink">{project.name}</span> will be removed.{' '}
-            {assets.length > 0
-              ? `${assets.length} capture${assets.length === 1 ? '' : 's'} will return to the review queue as unassigned.`
-              : 'No captures are currently attributed to this target.'}
-          </p>
-        </div>
+        <p className="text-xs text-neutral-400 leading-relaxed">
+          Are you sure you want to delete <span className="font-bold text-white">{project.name}</span>?
+          {assets.length > 0
+            ? ` ${assets.length} capture${assets.length === 1 ? '' : 's'} will return to the review queue as unassigned.`
+            : ' No captures are currently attributed to this project.'}
+        </p>
       </Modal>
+
+      {/* Multi-Photo Upload Dialog for Project */}
+      <UploadDialog
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        initialLat={project.latitude}
+        initialLng={project.longitude}
+      />
     </div>
   );
 }

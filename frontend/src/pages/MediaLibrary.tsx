@@ -1,78 +1,81 @@
-import { useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
-  Images,
   Upload,
   RefreshCw,
-  ExternalLink,
-  X,
-  Layers,
-  Crop,
-  Zap,
-  MapPin,
-  Navigation,
   Check,
+  Trash2,
 } from 'lucide-react';
 import {
   useMediaLibrary,
-  useDeleteMedia,
-  useSyncAllCloudinaryMetadata,
   useAssetTransformations,
   useUploadMedia,
+  useDeleteMedia,
 } from '../hooks/media';
 import { useProjects } from '../hooks/projects';
-import { useUploadSignature, directUpload as directUploadToCdn } from '../hooks/upload';
+import { useUploadSignature, directUpload as directUploadToCdn, type UploadSignature } from '../hooks/upload';
 import {
   EmptyState,
   ErrorState,
   Skeleton,
-  SkeletonCards,
-  SkeletonRows,
-  Chip,
   Coordinate,
-  ScoreReadout,
   Modal,
   SegmentedControl,
   Field,
-  AssetId,
 } from '../components/ui';
-import { humanizeToken, relativeTime, statusOf } from '../lib/presentation';
+import { humanizeToken, shortDate, statusOf } from '../lib/presentation';
 import type { MediaAsset } from '../types';
 
 type Filter = 'all' | 'exceptions' | 'ready' | 'geo';
 
 const FILTERS: { value: Filter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'exceptions', label: 'Exceptions' },
-  { value: 'ready', label: 'Verified' },
-  { value: 'geo', label: 'Geo-tagged' },
+  { value: 'all', label: 'ALL CAPTURES' },
+  { value: 'ready', label: 'VERIFIED' },
+  { value: 'exceptions', label: 'EXCEPTIONS' },
+  { value: 'geo', label: 'GEO-TAGGED' },
 ];
 
 /* ------------------------------------------------------------------ */
-/* Upload                                                              */
+/* Upload Dialog (Multi-Photo Batch Upload)                           */
 /* ------------------------------------------------------------------ */
 
-function UploadDialog({
+export function UploadDialog({
   open,
   onClose,
-  onUpload,
-  onDirectUpload,
-  pending,
-  directPending,
-  signatureUnavailable,
+  signatureData,
+  signatureUnavailable = false,
+  initialLat,
+  initialLng,
 }: {
   open: boolean;
   onClose: () => void;
-  onUpload: (file: File, lat: number | null, lng: number | null) => void;
-  onDirectUpload: (file: File) => void;
-  pending: boolean;
-  directPending: boolean;
-  signatureUnavailable: boolean;
+  signatureData?: UploadSignature | null;
+  signatureUnavailable?: boolean;
+  initialLat?: number | null;
+  initialLng?: number | null;
 }) {
-  const [file, setFile] = useState<File | null>(null);
+  const queryClient = useQueryClient();
+  const uploadMutation = useUploadMedia();
+  const [files, setFiles] = useState<File[]>([]);
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
   const [isLocating, setIsLocating] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [fileStatuses, setFileStatuses] = useState<Record<string, 'pending' | 'uploading' | 'success' | 'error'>>({});
+  const [uploadProgress, setUploadProgress] = useState<{
+    current: number;
+    total: number;
+    currentName: string;
+    errors: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      if (initialLat != null && !isNaN(initialLat)) setLat(initialLat.toFixed(6));
+      if (initialLng != null && !isNaN(initialLng)) setLng(initialLng.toFixed(6));
+    }
+  }, [open, initialLat, initialLng]);
+
   const [geoStatus, setGeoStatus] = useState<{
     type: 'idle' | 'success' | 'error';
     message: string;
@@ -83,18 +86,45 @@ function UploadDialog({
   const lngNum = lng.trim() === '' ? null : Number(lng);
   const coordError =
     (latNum == null) !== (lngNum == null)
-      ? 'Enter both coordinates or leave both blank to rely on EXIF.'
+      ? 'Enter both coordinates or leave both blank to extract individual EXIF from each photograph.'
       : undefined;
 
-  const busy = pending || directPending;
+  const totalBytes = useMemo(() => files.reduce((acc, f) => acc + f.size, 0), [files]);
+
+  const filePreviews = useMemo(() => {
+    return files.map((f, idx) => ({
+      id: `${f.name}-${f.size}-${idx}`,
+      file: f,
+      url: URL.createObjectURL(f),
+      sizeKb: Math.round(f.size / 1024),
+    }));
+  }, [files]);
 
   const close = () => {
-    setFile(null);
+    if (isUploading) return;
+    setFiles([]);
+    setFileStatuses({});
+    setUploadProgress(null);
     setLat('');
     setLng('');
     setIsLocating(false);
     setGeoStatus({ type: 'idle', message: '' });
     onClose();
+  };
+
+  const addFiles = (newFiles: FileList | File[] | null) => {
+    if (!newFiles) return;
+    const array = Array.from(newFiles).filter((f) => f.type.startsWith('image/'));
+    setFiles((prev) => {
+      // deduplicate by name & size
+      const existing = new Set(prev.map((f) => `${f.name}-${f.size}`));
+      const filtered = array.filter((f) => !existing.has(`${f.name}-${f.size}`));
+      return [...prev, ...filtered];
+    });
+  };
+
+  const removeFile = (index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const fetchLiveLocation = () => {
@@ -128,11 +158,11 @@ function UploadDialog({
         setIsLocating(false);
         let msg = 'Failed to fetch live location.';
         if (error.code === error.PERMISSION_DENIED) {
-          msg = 'Location permission denied. Please allow access in your browser.';
+          msg = 'Location permission denied in browser.';
         } else if (error.code === error.POSITION_UNAVAILABLE) {
-          msg = 'Location information is currently unavailable.';
+          msg = 'GPS location unavailable.';
         } else if (error.code === error.TIMEOUT) {
-          msg = 'Location acquisition timed out. Please try again.';
+          msg = 'Location request timed out.';
         }
         setGeoStatus({
           type: 'error',
@@ -153,122 +183,306 @@ function UploadDialog({
     setGeoStatus({ type: 'idle', message: '' });
   };
 
+  const handleStartBatchUpload = async () => {
+    if (files.length === 0 || coordError || isUploading) return;
+    setIsUploading(true);
+
+    const initialStatuses: Record<string, 'pending' | 'uploading' | 'success' | 'error'> = {};
+    files.forEach((f) => {
+      initialStatuses[f.name] = 'pending';
+    });
+    setFileStatuses(initialStatuses);
+
+    let errorCount = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      const currentFile = files[i];
+      setFileStatuses((prev) => ({ ...prev, [currentFile.name]: 'uploading' }));
+      setUploadProgress({
+        current: i + 1,
+        total: files.length,
+        currentName: currentFile.name,
+        errors: errorCount,
+      });
+
+      try {
+        if (signatureUnavailable || latNum != null || !signatureData) {
+          await uploadMutation.mutateAsync({
+            file: currentFile,
+            latitude: latNum,
+            longitude: lngNum,
+          });
+        } else {
+          await directUploadToCdn(signatureData, currentFile);
+        }
+        setFileStatuses((prev) => ({ ...prev, [currentFile.name]: 'success' }));
+      } catch (err) {
+        errorCount++;
+        setFileStatuses((prev) => ({ ...prev, [currentFile.name]: 'error' }));
+      }
+    }
+
+    queryClient.invalidateQueries({ queryKey: ['media'] });
+    queryClient.invalidateQueries({ queryKey: ['projects'] });
+    queryClient.invalidateQueries({ queryKey: ['project'] });
+
+    setTimeout(() => {
+      setIsUploading(false);
+      setUploadProgress(null);
+      close();
+    }, 1200);
+  };
+
   return (
     <Modal
       open={open}
       onClose={close}
-      title="Ingest field capture"
-      width="max-w-md"
+      title="Batch Photographic Ingestion"
+      width="max-w-2xl"
       footer={
-        <>
-          <button type="button" onClick={close} className="btn btn-secondary">
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={!file || Boolean(coordError) || busy}
-            onClick={() => {
-              if (!file) return;
-              if (signatureUnavailable || latNum != null) onUpload(file, latNum, lngNum);
-              else onDirectUpload(file);
-            }}
-            className="btn btn-primary"
-          >
-            {directPending ? 'Sending to CDN' : pending ? 'Uploading' : 'Ingest capture'}
-          </button>
-        </>
+        <div className="flex items-center justify-between w-full">
+          <span className="font-mono text-xs text-neutral-500">
+            {files.length > 0 && (
+              <span>
+                {files.length} {files.length === 1 ? 'PHOTOGRAPH' : 'PHOTOGRAPHS'} (
+                {Math.round(totalBytes / 1024)} KB)
+              </span>
+            )}
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={close}
+              disabled={isUploading}
+              className="btn btn-secondary font-mono text-xs"
+            >
+              CANCEL
+            </button>
+            <button
+              type="button"
+              disabled={files.length === 0 || Boolean(coordError) || isUploading}
+              onClick={handleStartBatchUpload}
+              className="btn btn-primary font-mono text-xs"
+            >
+              {isUploading
+                ? `UPLOADING ${uploadProgress?.current ?? 1}/${uploadProgress?.total ?? files.length}...`
+                : files.length <= 1
+                  ? 'UPLOAD MEDIA →'
+                  : `UPLOAD ${files.length} CAPTURES →`}
+            </button>
+          </div>
+        </div>
       }
     >
-      <div className="p-4 space-y-4">
-        <Field label="Photograph" hint="JPEG or PNG. EXIF coordinates are read automatically.">
-          {() => (
-            <div className="flex items-center gap-3">
-              <label className="btn btn-secondary cursor-pointer">
-                <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-                Choose file
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="sr-only"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                />
-              </label>
-              {file ? (
-                <span className="meta truncate">
-                  {file.name} ({Math.round(file.size / 1024)} kB)
-                </span>
-              ) : (
-                <span className="meta">no file selected</span>
-              )}
-            </div>
-          )}
-        </Field>
-
-        <div className="space-y-2 pt-2 border-t border-line">
+      <div className="space-y-5">
+        {/* Drag & Drop Multi-file Selector */}
+        <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-ink-1 flex items-center gap-1.5">
-              <MapPin className="w-3.5 h-3.5 text-accent-500" aria-hidden="true" />
-              GPS Geolocation
+            <label className="font-mono text-[10.5px] uppercase tracking-wider text-neutral-400 block">
+              Field Photographs (Multi-Select Supported)
+            </label>
+            {files.length > 0 && !isUploading && (
+              <button
+                type="button"
+                onClick={() => setFiles([])}
+                className="text-[10px] font-mono text-neutral-500 hover:text-red-400 transition-colors uppercase"
+              >
+                CLEAR ALL
+              </button>
+            )}
+          </div>
+
+          <div
+            className="relative border border-dashed border-white/[0.18] bg-[#080808] p-6 text-center hover:border-white/40 transition-colors"
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              addFiles(e.dataTransfer.files);
+            }}
+          >
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              disabled={isUploading}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+              onChange={(e) => {
+                addFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
+            <div className="flex flex-col items-center justify-center gap-2 pointer-events-none">
+              <Upload className="w-6 h-6 text-neutral-400" />
+              <div>
+                <p className="text-xs font-medium text-white">
+                  Click to select multiple photographs or drag & drop here
+                </p>
+                <p className="text-[11px] text-neutral-500 font-mono mt-0.5">
+                  JPEG, PNG, WEBP. Select multiple files at once. EXIF GPS extracted per photograph.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Selected Files Gallery List */}
+        {files.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between font-mono text-[10.5px] text-neutral-400 uppercase">
+              <span>Selected Batch Queue ({files.length})</span>
+              <span>Total: {Math.round(totalBytes / 1024)} kB</span>
+            </div>
+
+            <div className="max-h-56 overflow-y-auto space-y-1.5 border border-white/[0.08] bg-black p-2 divide-y divide-white/[0.04]">
+              {filePreviews.map((item, idx) => {
+                const status = fileStatuses[item.file.name] || 'pending';
+                return (
+                  <div key={item.id} className="pt-1.5 first:pt-0 flex items-center justify-between gap-3 text-xs font-mono">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <img
+                        src={item.url}
+                        alt=""
+                        className="w-9 h-9 object-cover border border-white/[0.1] bg-neutral-900 flex-shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-white text-xs truncate">{item.file.name}</p>
+                        <p className="text-[10px] text-neutral-500">{item.sizeKb} kB</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {status === 'pending' && (
+                        <span className="px-1.5 py-0.5 text-[9.5px] font-mono border border-white/20 text-neutral-400 uppercase">
+                          QUEUED
+                        </span>
+                      )}
+                      {status === 'uploading' && (
+                        <span className="px-1.5 py-0.5 text-[9.5px] font-mono border border-[#ff6a00] text-[#ff6a00] uppercase flex items-center gap-1">
+                          <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                          <span>UPLOADING</span>
+                        </span>
+                      )}
+                      {status === 'success' && (
+                        <span className="px-1.5 py-0.5 text-[9.5px] font-mono border border-white/40 bg-white/[0.08] text-white uppercase flex items-center gap-1 font-bold">
+                          <Check className="w-2.5 h-2.5 text-[#ff6a00]" />
+                          <span>DONE</span>
+                        </span>
+                      )}
+                      {status === 'error' && (
+                        <span className="px-1.5 py-0.5 text-[9.5px] font-mono border border-red-500/50 text-red-400 uppercase">
+                          FAILED
+                        </span>
+                      )}
+
+                      {!isUploading && (
+                        <button
+                          type="button"
+                          onClick={() => removeFile(idx)}
+                          className="p-1 text-neutral-500 hover:text-red-400 transition-colors"
+                          title="Remove file"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Live Upload Progress Bar */}
+        {isUploading && uploadProgress && (
+          <div className="space-y-2 p-3 bg-[#0a0a0a] border border-white/[0.1]">
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-white font-medium">
+                UPLOADING {uploadProgress.current} OF {uploadProgress.total}
+              </span>
+              <span className="text-[#ff6a00] font-bold">
+                {Math.round((uploadProgress.current / uploadProgress.total) * 100)}%
+              </span>
+            </div>
+            <div className="w-full h-1.5 bg-neutral-900 border border-white/[0.1] overflow-hidden">
+              <div
+                className="h-full bg-[#ff6a00] transition-all duration-300"
+                style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+              />
+            </div>
+            <p className="text-[11px] font-mono text-neutral-400 truncate">
+              Active: {uploadProgress.currentName}
+            </p>
+          </div>
+        )}
+
+        {/* Spatial Coordinates Option */}
+        <div className="space-y-2 pt-3 border-t border-white/[0.08]">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-neutral-400">
+              Spatial Coordinates (Optional Batch Override)
             </span>
             <div className="flex items-center gap-2">
               {(lat || lng) && (
                 <button
                   type="button"
                   onClick={clearLocation}
-                  className="text-[11px] text-ink-3 hover:text-ink-1 transition-colors underline decoration-dotted cursor-pointer"
+                  disabled={isUploading}
+                  className="text-[10px] font-mono text-neutral-500 hover:text-white transition-colors"
                 >
-                  Clear (rely on EXIF)
+                  CLEAR (USE INDIVIDUAL EXIF)
                 </button>
               )}
               <button
                 type="button"
                 onClick={fetchLiveLocation}
-                disabled={isLocating || busy}
-                className="btn btn-xs btn-secondary flex items-center gap-1.5 text-[11.5px]"
+                disabled={isLocating || isUploading}
+                className="text-[10.5px] font-mono text-white hover:bg-white/[0.08] flex items-center gap-1.5 border border-white/[0.2] px-2 py-1 transition-all"
                 title="Fetch live GPS coordinates from device"
               >
                 {isLocating ? (
                   <>
-                    <RefreshCw className="w-3 h-3 animate-spin text-accent-500" aria-hidden="true" />
-                    <span>Locating...</span>
+                    <RefreshCw className="w-3 h-3 animate-spin text-[#ff6a00]" aria-hidden="true" />
+                    <span>ACQUIRING GPS...</span>
                   </>
                 ) : (
-                  <>
-                    <Navigation className="w-3 h-3 text-accent-500" aria-hidden="true" />
-                    <span>Fetch live location</span>
-                  </>
+                  <span>FETCH GPS COORDINATES</span>
                 )}
               </button>
             </div>
           </div>
 
           {geoStatus.type === 'success' && (
-            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-success-500/10 border border-success-500/20 text-[11.5px] text-success-400">
-              <Check className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+            <div className="p-2 border border-[#ff6a00]/30 bg-[#ff6a00]/10 text-[11px] font-mono text-[#ff6a00] flex items-center gap-2">
+              <Check className="w-3 h-3 text-[#ff6a00]" aria-hidden="true" />
               <span>{geoStatus.message}</span>
             </div>
           )}
 
           {geoStatus.type === 'error' && (
-            <div className="px-2.5 py-1.5 rounded bg-warning-500/10 border border-warning-500/20 text-[11.5px] text-warning-400 leading-snug">
+            <div className="p-2 border border-red-500/20 text-[11px] font-mono text-red-400">
               {geoStatus.message}
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3 pt-1">
+          <div className="grid grid-cols-2 gap-3">
             <Field label="Latitude" error={coordError}>
               {(p) => (
                 <input
                   {...p}
                   type="number"
                   step="0.000001"
-                  className="field value"
+                  disabled={isUploading}
+                  className="field"
                   value={lat}
                   onChange={(e) => {
                     setLat(e.target.value);
                     if (geoStatus.type !== 'idle') setGeoStatus({ type: 'idle', message: '' });
                   }}
-                  placeholder="e.g. 28.6139"
+                  placeholder="Leave empty for auto-EXIF"
                 />
               )}
             </Field>
@@ -278,49 +492,26 @@ function UploadDialog({
                   {...p}
                   type="number"
                   step="0.000001"
-                  className="field value"
+                  disabled={isUploading}
+                  className="field"
                   value={lng}
                   onChange={(e) => {
                     setLng(e.target.value);
                     if (geoStatus.type !== 'idle') setGeoStatus({ type: 'idle', message: '' });
                   }}
-                  placeholder="e.g. 77.2090"
+                  placeholder="Leave empty for auto-EXIF"
                 />
               )}
             </Field>
           </div>
-          <p className="text-[11px] text-ink-3">
-            If left blank, GPS coordinates are extracted automatically from camera EXIF tags.
-          </p>
         </div>
-
-        {/* Transport note */}
-        <p className="text-[11.5px] text-ink-3 leading-relaxed flex items-start gap-2">
-          <Zap className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden="true" />
-          <span>
-            {signatureUnavailable || latNum != null
-              ? 'Coordinates and file are routed through the backend AI pipeline for automatic geofencing and project matching.'
-              : 'The file goes straight to the Cloudinary CDN, so a large photograph does not hold an API worker.'}
-          </span>
-        </p>
-
-        {file && !signatureUnavailable && latNum == null && (
-          <button
-            type="button"
-            onClick={() => onUpload(file, latNum, lngNum)}
-            disabled={Boolean(coordError) || busy}
-            className="btn btn-sm btn-ghost w-full"
-          >
-            Send through the API server instead
-          </button>
-        )}
       </div>
     </Modal>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Cloudinary detail                                                   */
+/* Transformation & Provenance Dialog                                 */
 /* ------------------------------------------------------------------ */
 
 type DetailTab = 'original' | 'provenance' | 'campaign';
@@ -328,9 +519,11 @@ type DetailTab = 'original' | 'provenance' | 'campaign';
 function TransformationDialog({
   asset,
   onClose,
+  onDelete,
 }: {
   asset: MediaAsset | null;
   onClose: () => void;
+  onDelete?: (asset: MediaAsset) => void;
 }) {
   const [tab, setTab] = useState<DetailTab>('original');
   const { data, isLoading } = useAssetTransformations(asset?.id ?? null);
@@ -356,102 +549,101 @@ function TransformationDialog({
     <Modal
       open
       onClose={onClose}
-      title="Delivery transformations"
+      title="Dynamic Image Delivery & Evidence"
       width="max-w-3xl"
       footer={
-        <>
-          <button type="button" onClick={onClose} className="btn btn-secondary">
-            Close
-          </button>
-          {current && (
-            <a
-              href={current}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-primary"
-            >
-              <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
-              Open delivery URL
-            </a>
-          )}
-        </>
+        <div className="flex items-center justify-between w-full">
+          <div>
+            {onDelete && (
+              <button
+                type="button"
+                onClick={() => onDelete(asset)}
+                className="btn btn-danger font-mono text-xs"
+              >
+                DELETE CAPTURE
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={onClose} className="btn btn-secondary font-mono text-xs">
+              CLOSE
+            </button>
+            {current && (
+              <a
+                href={current}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-primary font-mono text-xs"
+              >
+                OPEN CDN URL →
+              </a>
+            )}
+          </div>
+        </div>
       }
     >
-      <div className="px-4 pt-3">
+      <div className="space-y-4">
         <SegmentedControl<DetailTab>
           ariaLabel="Transformation view"
           value={tab}
           onChange={setTab}
           options={[
-            { value: 'original', label: 'Optimised' },
-            { value: 'provenance', label: 'Provenance' },
-            { value: 'campaign', label: 'Campaign' },
+            { value: 'original', label: 'Optimized CDN' },
+            { value: 'provenance', label: 'Provenance Badge' },
+            { value: 'campaign', label: 'Campaign Aspects' },
           ]}
         />
-      </div>
 
-      <div className="p-4 space-y-4">
-        <div className="panel-sunken aspect-[16/9] flex items-center justify-center overflow-hidden">
+        <div className="aspect-[16/10] flex items-center justify-center overflow-hidden bg-black border border-white/[0.08]">
           {isLoading ? (
             <Skeleton className="w-full h-full" />
           ) : current ? (
             <img
               src={current}
-              alt={`${tab} delivery transformation`}
+              alt={`${tab} transformation`}
               className="max-h-full max-w-full object-contain"
             />
           ) : (
-            <span className="meta">no delivery URL available</span>
+            <span className="text-xs font-mono text-neutral-600">No delivery URL available</span>
           )}
         </div>
 
         {tab === 'campaign' && aspectUrls.length > 0 && (
-          <ul className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {aspectUrls.map((aspect) => (
-              <li key={aspect.label}>
-                <a
-                  href={aspect.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block panel overflow-hidden hover:border-brand-300 transition-colors"
-                >
-                  <div className="aspect-square bg-sunken">
-                    <img
-                      src={aspect.url}
-                      alt={`${aspect.label} campaign export`}
-                      loading="lazy"
-                      decoding="async"
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  <div className="px-2.5 py-2 rule-t flex items-center gap-1.5">
-                    <Crop className="w-3 h-3 text-ink-3" aria-hidden="true" />
-                    <span className="label">{aspect.label}</span>
-                  </div>
-                </a>
-              </li>
+              <a
+                key={aspect.label}
+                href={aspect.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block border border-white/[0.08] hover:border-white/30 transition-colors"
+              >
+                <div className="aspect-square bg-black">
+                  <img
+                    src={aspect.url}
+                    alt={`${aspect.label} export`}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="p-2 border-t border-white/[0.08] text-center font-mono text-[10px] text-neutral-400">
+                  {aspect.label}
+                </div>
+              </a>
             ))}
-          </ul>
+          </div>
         )}
 
         {current && (
           <div>
-            <span className="label">Delivery URL</span>
-            <code className="block mt-1.5 p-2.5 panel-sunken text-[10.5px] leading-relaxed break-all text-ink-2">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-neutral-500 block mb-1">
+              DYNAMIC CDN ENDPOINT
+            </span>
+            <code className="block p-2.5 bg-black border border-white/[0.08] font-mono text-[11px] break-all text-neutral-300 select-all">
               {current}
             </code>
           </div>
-        )}
-
-        {data && (
-          <p className="flex items-start gap-1.5 text-[11.5px] text-ink-3">
-            <Layers className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden="true" />
-            <span>
-              Variants are produced by Cloudinary URL transformation. Format and quality are
-              negotiated per request with <span className="value">f_auto,q_auto</span>; crops use the
-              detected focal point via <span className="value">g_auto</span>.
-            </span>
-          </p>
         )}
       </div>
     </Modal>
@@ -459,62 +651,27 @@ function TransformationDialog({
 }
 
 /* ------------------------------------------------------------------ */
-/* Page                                                                */
+/* Main MediaLibrary Component                                        */
 /* ------------------------------------------------------------------ */
 
 export default function MediaLibrary() {
   const { data: media, isLoading, error, refetch } = useMediaLibrary();
   const { data: projects } = useProjects();
-  const deleteMutation = useDeleteMedia();
-  const syncMutation = useSyncAllCloudinaryMetadata();
-  const queryClient = useQueryClient();
 
   const [filter, setFilter] = useState<Filter>('all');
   const [projectFilter, setProjectFilter] = useState('');
   const [query, setQuery] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
   const [detail, setDetail] = useState<MediaAsset | null>(null);
-  const [view, setView] = useState<'grid' | 'table'>('grid');
+  const [assetToDelete, setAssetToDelete] = useState<MediaAsset | null>(null);
 
-  const uploadMutation = useUploadMedia();
+  const deleteMutation = useDeleteMedia();
   const signature = useUploadSignature(uploadOpen);
-  const [directResult, setDirectResult] = useState<string | null>(null);
-  const [directError, setDirectError] = useState<string | null>(null);
 
-  /**
-   * Direct CDN upload, with the proxied path as the fallback.
-   *
-   * A direct upload does not create an asset record on its own: the asset is
-   * created by the backend's upload webhook. So this reports "the bytes landed"
-   * and leaves the pipeline polling to pick up the new asset, rather than
-   * pretending the asset is ready.
-   */
-  const directUpload = useMutation({
-    mutationFn: async (file: File) => {
-      if (!signature.data) throw new Error('No upload signature available');
-      const result = await directUploadToCdn(signature.data, file);
-      return result;
-    },
-    onSuccess: (result) => {
-      setDirectError(null);
-      setDirectResult(
-        `Sent to the CDN (${Math.round(result.bytes / 1024)} kB). The asset appears once the upload webhook has processed it.`,
-      );
-      queryClient.invalidateQueries({ queryKey: ['media'] });
-    },
-    onError: (error: Error) => {
-      setDirectResult(null);
-      setDirectError(error.message);
-    },
-  });
-
-  // Lookup map rather than a find() helper, so the memo below has a stable
-  // dependency and does not re-derive names on every keystroke.
   const nameByProject = useMemo(
     () => new Map((projects ?? []).map((p) => [p.id, p.name])),
     [projects],
   );
-  const projectName = (id: string | null) => (id ? (nameByProject.get(id) ?? 'unknown') : null);
 
   const rows = useMemo(() => {
     let list = media ?? [];
@@ -541,379 +698,256 @@ export default function MediaLibrary() {
   const total = media?.length ?? 0;
 
   return (
-    <div className="p-4 lg:p-6 space-y-4">
-      {/* Control bar */}
-      <div className="panel p-3 flex flex-col xl:flex-row xl:items-center gap-3">
-        <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
-          <SegmentedControl<Filter>
-            ariaLabel="Filter captures"
-            size="sm"
-            value={filter}
-            onChange={setFilter}
-            options={FILTERS}
-          />
+    <div className="p-6 sm:p-10 lg:p-14 space-y-12 max-w-6xl mx-auto">
+      {/* Editorial Header */}
+      <section className="space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-mono tracking-widest text-[#ff6a00] uppercase font-bold">
+              02 // PHOTOGRAPHIC CORPUS
+            </p>
+            <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-white uppercase mt-1">
+              Media Library
+            </h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-xs font-mono text-neutral-400">
+              <span className="text-white font-bold">{total}</span> ITEMS
+            </span>
+            <button
+              type="button"
+              onClick={() => setUploadOpen(true)}
+              className="btn btn-sm btn-primary font-mono text-xs"
+            >
+              UPLOAD MEDIA →
+            </button>
+          </div>
+        </div>
 
-          <label htmlFor="media-project" className="sr-only">
-            Filter by project
-          </label>
-          <select
-            id="media-project"
-            value={projectFilter}
-            onChange={(e) => setProjectFilter(e.target.value)}
-            className="field field-sm w-auto min-w-[150px]"
-          >
-            <option value="">All projects</option>
-            {projects?.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-
-          <label htmlFor="media-search" className="sr-only">
-            Search captures
-          </label>
+        {/* Minimal Search & Filter Bar */}
+        <div className="pt-6 border-t border-white/[0.08] space-y-4">
           <input
             id="media-search"
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search descriptions"
-            className="field field-sm w-auto min-w-[180px] flex-1"
+            placeholder="⌕  Filter evidence by scene, activity tag, description, or project..."
+            className="w-full bg-transparent text-[13px] text-white placeholder:text-neutral-500 outline-none pb-2 border-b border-white/[0.08] focus:border-[#ff6a00] transition-colors font-sans"
           />
-        </div>
 
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <span className="meta">
-            {rows.length} of {total}
-          </span>
-          {/* Two representations of the same set. Photographs are reviewed as
-              images; audits and handovers are read as numbers. Forcing one
-              layout makes one of those two jobs worse. */}
-          <SegmentedControl<'grid' | 'table'>
-            ariaLabel="Result layout"
-            size="sm"
-            value={view}
-            onChange={setView}
-            options={[
-              { value: 'grid', label: 'Grid' },
-              { value: 'table', label: 'Table' },
-            ]}
-          />
-          <button
-            type="button"
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-            className="btn btn-sm btn-secondary"
-            title="Write evidence metadata back to Cloudinary context and tags"
-          >
-            <RefreshCw
-              className={syncMutation.isPending ? 'w-3 h-3 animate-spin' : 'w-3 h-3'}
-              aria-hidden="true"
-            />
-            {syncMutation.isPending ? 'Syncing' : 'Sync CDN'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setUploadOpen(true)}
-            className="btn btn-sm btn-primary"
-          >
-            <Upload className="w-3 h-3" aria-hidden="true" />
-            Ingest
-          </button>
-        </div>
-      </div>
-
-      {syncMutation.isSuccess && syncMutation.data && (
-        <div
-          role="status"
-          className="panel border-ok-100 bg-ok-50 px-3 py-2 flex items-center gap-2 flex-wrap"
-        >
-          <span className="text-[12px] text-ok-700">
-            Cloudinary context and tags rewritten for {syncMutation.data.synced_count} of{' '}
-            {syncMutation.data.total_assets} assets.
-          </span>
-          <button
-            type="button"
-            onClick={() => syncMutation.reset()}
-            aria-label="Dismiss sync summary"
-            className="btn btn-icon btn-ghost ml-auto -mr-1 text-ok-700"
-          >
-            <X className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        </div>
-      )}
-
-      {uploadMutation.isError && (
-        <div
-          role="alert"
-          className="panel border-danger-100 bg-danger-50 px-3 py-2 flex items-start gap-2"
-        >
-          <span className="text-[12px] text-danger-700">
-            The API server rejected the upload. Check that the backend is reachable, or retry
-            through the CDN path.
-          </span>
-        </div>
-      )}
-
-      {directError && (
-        <div
-          role="alert"
-          className="panel border-danger-100 bg-danger-50 px-3 py-2 flex items-start gap-2"
-        >
-          <span className="text-[12px] text-danger-700 break-words">
-            Direct upload failed: {directError}
-          </span>
-          <button
-            type="button"
-            onClick={() => setDirectError(null)}
-            aria-label="Dismiss upload error"
-            className="btn btn-icon btn-ghost ml-auto -mr-1 text-danger-700"
-          >
-            <X className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        </div>
-      )}
-
-      {directResult && (
-        <div
-          role="status"
-          className="panel border-ok-100 bg-ok-50 px-3 py-2 flex items-center gap-2 flex-wrap"
-        >
-          <span className="text-[12px] text-ok-700">{directResult}</span>
-          <button
-            type="button"
-            onClick={() => setDirectResult(null)}
-            aria-label="Dismiss upload summary"
-            className="btn btn-icon btn-ghost ml-auto -mr-1 text-ok-700"
-          >
-            <X className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-        </div>
-      )}
-
-      {isLoading ? (
-        view === 'grid' ? (
-          <SkeletonCards count={8} />
-        ) : (
-          <div className="panel" aria-busy="true" aria-label="Loading media">
-            <div className="px-4 py-2.5 rule-b">
-              <Skeleton className="h-2.5 w-32" />
+          <div className="flex flex-wrap items-center justify-between gap-4 text-xs font-mono">
+            <div className="flex items-center gap-4">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  type="button"
+                  onClick={() => setFilter(f.value)}
+                  className={`transition-colors uppercase ${filter === f.value ? 'text-[#ff6a00] font-bold underline underline-offset-4' : 'text-neutral-500 hover:text-neutral-300'}`}
+                >
+                  {f.label}
+                </button>
+              ))}
             </div>
-            <SkeletonRows rows={8} />
+
+            {projects && projects.length > 0 && (
+              <select
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                className="bg-black text-neutral-300 border border-white/[0.12] px-2.5 py-1 text-xs outline-none"
+              >
+                <option value="">ALL PROJECTS</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
-        )
+        </div>
+      </section>
+
+      {/* Media Gallery Masonry/Editorial Layout */}
+      {isLoading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8" aria-busy="true">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="aspect-[16/10] bg-white/[0.02] animate-pulse" />
+          ))}
+        </div>
       ) : error ? (
         <ErrorState
-          title="Media library unavailable"
-          detail="The media request failed."
+          title="Failed to load media"
+          detail="Could not retrieve media assets from the backend."
           onRetry={() => void refetch()}
         />
       ) : rows.length === 0 ? (
-        <div className="panel">
-          <EmptyState
-            icon={Images}
-            title={total === 0 ? 'Corpus is empty' : 'No capture matches'}
-            description={
-              total === 0
-                ? 'Ingest a field photograph to start visual analysis, geographic routing and vector indexing.'
-                : 'Adjust the filters or clear the search to see the rest of the corpus.'
-            }
-            action={
-              total === 0 ? (
-                <button type="button" onClick={() => setUploadOpen(true)} className="btn btn-primary">
-                  <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-                  Ingest capture
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFilter('all');
-                    setProjectFilter('');
-                    setQuery('');
-                  }}
-                  className="btn btn-secondary"
-                >
-                  Reset filters
-                </button>
-              )
-            }
-          />
-        </div>
-      ) : view === 'grid' ? (
-        <ul className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+        <EmptyState
+          title={query || filter !== 'all' ? 'No matching media' : 'No media uploaded yet'}
+          description="Field photographs stream into the decision router for project assignment and evidence extraction."
+          action={
+            <button
+              type="button"
+              onClick={() => setUploadOpen(true)}
+              className="btn btn-primary font-mono text-xs"
+            >
+              UPLOAD MEDIA →
+            </button>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
           {rows.map((asset) => {
-            const status = statusOf(asset);
+            const s = statusOf(asset);
+            const pName = asset.project_id ? nameByProject.get(asset.project_id) : null;
+
             return (
-              <li key={asset.id} className="panel group flex flex-col">
-                <button
-                  type="button"
+              <div key={asset.id} className="space-y-3 group">
+                <div
+                  className="relative aspect-[16/10] bg-black border border-white/[0.1] overflow-hidden cursor-pointer"
                   onClick={() => setDetail(asset)}
-                  aria-label={`Open delivery transformations for capture ${asset.id}`}
-                  className="relative block aspect-[4/3] bg-sunken overflow-hidden text-left"
                 >
                   {asset.cloudinary_url ? (
                     <img
                       src={asset.cloudinary_url}
-                      alt={asset.description ?? 'Field capture'}
+                      alt={asset.description ?? 'Capture'}
                       loading="lazy"
                       decoding="async"
-                      className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                     />
                   ) : (
-                    <span className="absolute inset-0 flex items-center justify-center">
-                      <Images className="w-5 h-5 text-ink-3" aria-hidden="true" />
-                    </span>
+                    <div className="w-full h-full flex items-center justify-center font-mono text-xs text-neutral-600">
+                      NO PREVIEW
+                    </div>
                   )}
-                  <span className="absolute top-1.5 left-1.5">
-                    <Chip className={status.chip}>{status.label}</Chip>
-                  </span>
-                </button>
 
-                <div className="p-2.5 flex-1 flex flex-col gap-1.5">
-                  <p className="text-[12px] text-ink leading-snug line-clamp-2 min-h-[2.1em]">
-                    {asset.description || humanizeToken(asset.activity) || 'Awaiting analysis'}
-                  </p>
-                  <p className="meta truncate">{projectName(asset.project_id) ?? 'unassigned'}</p>
-                  <div className="flex items-center justify-between gap-2 mt-auto pt-1">
-                    <Coordinate lat={asset.image_latitude} lng={asset.image_longitude} />
-                    <span className="meta">{relativeTime(asset.uploaded_at)}</span>
-                  </div>
-                  <div className="flex items-center gap-1 pt-1.5 rule-t mt-1">
-                    <AssetId id={asset.id} className="flex-1" />
-                    <button
-                      type="button"
-                      onClick={() => deleteMutation.mutate(asset.id)}
-                      disabled={deleteMutation.isPending}
-                      aria-label={`Delete capture ${asset.id}`}
-                      className="btn btn-icon btn-ghost text-ink-3 hover:text-danger-600 hover:bg-danger-50"
-                    >
-                      <X className="w-3.5 h-3.5" aria-hidden="true" />
-                    </button>
-                  </div>
+                  <span className="absolute top-2 left-2 px-2 py-0.5 bg-black/90 text-[9.5px] font-mono text-[#ff6a00] border border-[#ff6a00]/40 uppercase">
+                    {s.label}
+                  </span>
                 </div>
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        /* Dense table. Same data, ordered for auditing: position, offset from
-           anchor, confidence, recency. This is the layout a reviewer exports
-           from, and it fits 3x more rows on the same screen. */
-        <div className="panel overflow-x-auto">
-          <table className="w-full min-w-[860px] text-left border-collapse">
-            <caption className="sr-only">Captures with position, anchor offset and confidence</caption>
-            <thead>
-              <tr className="rule-b">
-                <th scope="col" className="label px-3 py-2.5 w-[54px]">
-                  <span className="sr-only">Preview</span>
-                </th>
-                <th scope="col" className="label px-2 py-2.5">Capture</th>
-                <th scope="col" className="label px-2 py-2.5">State</th>
-                <th scope="col" className="label px-2 py-2.5">Project</th>
-                <th scope="col" className="label px-2 py-2.5 w-[136px]">Position</th>
-                <th scope="col" className="label px-2 py-2.5 w-[80px] text-right">Offset</th>
-                <th scope="col" className="label px-2 py-2.5 w-[104px]">Confidence</th>
-                <th scope="col" className="label px-2 py-2.5 w-[88px] text-right">Ingested</th>
-                <th scope="col" className="label px-2 py-2.5 w-[44px]">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((asset) => {
-                const status = statusOf(asset);
-                return (
-                  <tr key={asset.id} className="rule-b last:border-b-0 row-hover group">
-                    <td className="px-3 py-2">
+
+                <div className="space-y-1">
+                  <p className="text-[13.5px] text-white font-normal line-clamp-2 leading-snug">
+                    {asset.description || humanizeToken(asset.activity)}
+                  </p>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-neutral-500 pt-1">
+                    {pName ? (
+                      <span className="text-neutral-300 truncate max-w-[160px]">{pName}</span>
+                    ) : (
+                      <span className="text-[#ff6a00]">UNASSIGNED</span>
+                    )}
+                    <span>{shortDate(asset.uploaded_at)}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1 border-t border-white/[0.06] text-xs font-mono">
+                    <Coordinate lat={asset.image_latitude} lng={asset.image_longitude} />
+                    <div className="flex items-center gap-3">
                       <button
                         type="button"
                         onClick={() => setDetail(asset)}
-                        aria-label={`Open transformations for ${asset.id}`}
-                        className="block w-9 h-9 bg-sunken border border-line overflow-hidden"
+                        className="text-neutral-400 hover:text-white transition-colors"
                       >
-                        {asset.cloudinary_url && (
-                          <img
-                            src={asset.cloudinary_url}
-                            alt=""
-                            loading="lazy"
-                            decoding="async"
-                            className="w-full h-full object-cover"
-                          />
-                        )}
+                        INSPECT →
                       </button>
-                    </td>
-                    <td className="px-2 py-2 max-w-[320px]">
-                      <p className="text-[12px] text-ink truncate">
-                        {asset.description || humanizeToken(asset.activity) || 'Awaiting analysis'}
-                      </p>
-                      <AssetId id={asset.id} />
-                    </td>
-                    <td className="px-2 py-2">
-                      <Chip className={status.chip}>{status.label}</Chip>
-                    </td>
-                    <td className="px-2 py-2 max-w-[180px]">
-                      <span className="text-[12px] text-ink-2 truncate block">
-                        {projectName(asset.project_id) ?? 'unassigned'}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2">
-                      <Coordinate lat={asset.image_latitude} lng={asset.image_longitude} />
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      <span className="value text-[12px]">
-                        {asset.location_match_distance != null
-                          ? `${asset.location_match_distance.toFixed(2)}`
-                          : '--'}
-                      </span>
-                      {asset.location_match_distance != null && (
-                        <span className="label ml-0.5">km</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-2">
-                      <ScoreReadout score={asset.routing_confidence} />
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      <span className="meta">{relativeTime(asset.uploaded_at)}</span>
-                    </td>
-                    <td className="px-2 py-2 text-right">
                       <button
                         type="button"
-                        onClick={() => deleteMutation.mutate(asset.id)}
-                        disabled={deleteMutation.isPending}
-                        aria-label={`Delete capture ${asset.id}`}
-                        className="btn btn-icon btn-ghost text-ink-3 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-danger-600"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAssetToDelete(asset);
+                        }}
+                        className="text-neutral-600 hover:text-red-400 transition-colors flex items-center gap-1"
+                        title="Delete media capture"
                       >
-                        <X className="w-3.5 h-3.5" aria-hidden="true" />
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>DELETE</span>
                       </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
+      {/* Upload Dialog */}
       <UploadDialog
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
-        pending={uploadMutation.isPending}
-        directPending={directUpload.isPending}
+        signatureData={signature.data}
         signatureUnavailable={!signature.data}
-        onUpload={(file, lat, lng) => {
-          uploadMutation.mutate(
-            lat != null && lng != null ? { file, latitude: lat, longitude: lng } : file,
-            { onSuccess: () => setUploadOpen(false) },
-          );
-        }}
-        onDirectUpload={(file) => {
-          directUpload.mutate(file, { onSuccess: () => setUploadOpen(false) });
-        }}
       />
 
-      <TransformationDialog asset={detail} onClose={() => setDetail(null)} />
+      {/* Transformation & Provenance Modal */}
+      <TransformationDialog
+        key={detail?.id ?? 'none'}
+        asset={detail}
+        onClose={() => setDetail(null)}
+        onDelete={(a) => setAssetToDelete(a)}
+      />
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        open={assetToDelete != null}
+        onClose={() => setAssetToDelete(null)}
+        title="Delete Media Capture"
+        width="max-w-md"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setAssetToDelete(null)}
+              className="btn btn-secondary font-mono text-xs"
+            >
+              CANCEL
+            </button>
+            <button
+              type="button"
+              disabled={deleteMutation.isPending}
+              onClick={() => {
+                if (!assetToDelete) return;
+                deleteMutation.mutate(assetToDelete.id, {
+                  onSuccess: () => {
+                    if (detail?.id === assetToDelete.id) {
+                      setDetail(null);
+                    }
+                    setAssetToDelete(null);
+                  },
+                });
+              }}
+              className="btn btn-danger font-mono text-xs"
+            >
+              {deleteMutation.isPending ? 'DELETING...' : 'CONFIRM DELETE'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {assetToDelete && (
+            <div className="flex gap-4 items-start">
+              {assetToDelete.cloudinary_url && (
+                <img
+                  src={assetToDelete.cloudinary_url}
+                  alt=""
+                  className="w-20 h-20 object-cover border border-white/[0.12] bg-black flex-shrink-0"
+                />
+              )}
+              <div className="min-w-0 space-y-1">
+                <p className="text-xs font-mono text-white break-all">ID: {assetToDelete.id}</p>
+                <p className="text-xs text-neutral-300 line-clamp-2">
+                  {assetToDelete.description || humanizeToken(assetToDelete.activity)}
+                </p>
+                <p className="text-[11px] font-mono text-neutral-500">
+                  Uploaded: {shortDate(assetToDelete.uploaded_at)}
+                </p>
+              </div>
+            </div>
+          )}
+          <p className="text-xs text-neutral-400 leading-relaxed border-t border-white/[0.08] pt-3">
+            Are you sure you want to permanently delete this media capture? This will remove the visual asset, AI description embeddings from vector index, and all associated project records.
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }

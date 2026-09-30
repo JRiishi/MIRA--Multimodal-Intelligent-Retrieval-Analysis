@@ -1,27 +1,25 @@
 import { useState } from 'react';
-import { ScanSearch, SlidersHorizontal, X, ExternalLink, Sparkle } from 'lucide-react';
 import { useSearch, type SearchRequestParams } from '../hooks/search';
 import { useProjects } from '../hooks/projects';
 import { useAssetTransformations } from '../hooks/media';
 import {
   EmptyState,
   ErrorState,
-  Skeleton,
-  Chip,
+  Coordinate,
   Modal,
   SegmentedControl,
   Field,
   ScoreReadout,
-  Coordinate,
 } from '../components/ui';
-import { SEARCH_SOURCE_LABEL, humanizeToken, shortDate } from '../lib/presentation';
+import { SEARCH_SOURCE_LABEL, humanizeToken } from '../lib/presentation';
 import type { SearchResultItem } from '../types';
 
 const EXAMPLES = [
   'cable trenching along the array',
-  'sluice gate discharge',
+  'sluice gate discharge and culvert formwork',
   'turbine blade staged for lift',
-  'box culvert formwork',
+  'yellow bulldozer working on prepared road bed',
+  'asphalt paving machine resurfacing road',
 ];
 
 type ResultTab = 'original' | 'provenance' | 'campaign';
@@ -51,40 +49,37 @@ function ResultDialog({ item, onClose }: { item: SearchResultItem | null; onClos
     <Modal
       open
       onClose={onClose}
-      title="Evidence detail"
+      title="Evidence Inspector"
       width="max-w-3xl"
       footer={
         <>
-          <button type="button" onClick={onClose} className="btn btn-secondary">
-            Close
+          <button type="button" onClick={onClose} className="btn btn-secondary font-mono text-xs">
+            CLOSE
           </button>
           <a
             href={item.cloudinary_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-primary print-url"
+            className="btn btn-primary font-mono text-xs"
           >
-            <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
-            Open original
+            ORIGINAL PHOTOGRAPH →
           </a>
         </>
       }
     >
-      <div className="px-4 pt-3">
+      <div className="space-y-4">
         <SegmentedControl<ResultTab>
           ariaLabel="Transformation view"
           value={tab}
           onChange={setTab}
           options={[
-            { value: 'original', label: 'Optimised' },
-            { value: 'provenance', label: 'Provenance' },
-            { value: 'campaign', label: 'Campaign' },
+            { value: 'original', label: 'Optimized CDN' },
+            { value: 'provenance', label: 'Provenance Badge' },
+            { value: 'campaign', label: 'Campaign Aspects' },
           ]}
         />
-      </div>
 
-      <div className="p-4 space-y-4">
-        <div className="panel-sunken aspect-[16/9] flex items-center justify-center overflow-hidden">
+        <div className="aspect-[16/10] flex items-center justify-center overflow-hidden bg-black border border-white/[0.08]">
           <img
             src={current}
             alt={item.description}
@@ -92,62 +87,36 @@ function ResultDialog({ item, onClose }: { item: SearchResultItem | null; onClos
           />
         </div>
 
-        <p className="text-[13px] text-ink-2 leading-relaxed">{item.description}</p>
+        <p className="text-[13.5px] text-neutral-300 leading-relaxed border-t border-white/[0.08] pt-3 font-sans">
+          {item.description}
+        </p>
 
-        <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-3 border-y border-white/[0.08] text-xs font-mono">
           <div>
-            <dt className="label">Similarity</dt>
-            <dd className="mt-1">
+            <span className="text-[10px] text-neutral-500 uppercase block tracking-wider">SEMANTIC MATCH</span>
+            <div className="mt-1">
               <ScoreReadout score={item.score} />
-            </dd>
+            </div>
           </div>
           <div>
-            <dt className="label">Activity</dt>
-            <dd className="value text-[12px] text-ink-2 mt-1">{humanizeToken(item.activity)}</dd>
+            <span className="text-[10px] text-neutral-500 uppercase block tracking-wider">ACTIVITY</span>
+            <span className="text-neutral-300 mt-1 block truncate">
+              {humanizeToken(item.activity) || 'General'}
+            </span>
           </div>
           <div>
-            <dt className="label">Scene</dt>
-            <dd className="value text-[12px] text-ink-2 mt-1 truncate">{humanizeToken(item.scene)}</dd>
+            <span className="text-[10px] text-neutral-500 uppercase block tracking-wider">SCENE</span>
+            <span className="text-neutral-300 mt-1 block truncate">
+              {humanizeToken(item.scene) || 'Field Site'}
+            </span>
           </div>
           <div>
-            <dt className="label">Position</dt>
-            <dd className="mt-1">
+            <span className="text-[10px] text-neutral-500 uppercase block tracking-wider">COORDINATES</span>
+            <div className="mt-1">
               <Coordinate lat={item.latitude} lng={item.longitude} />
-            </dd>
+            </div>
           </div>
-        </dl>
-
-        {(item.objects?.length ?? 0) > 0 && (
-          <div>
-            <span className="label">Detected objects</span>
-            <ul className="flex flex-wrap gap-1 mt-1.5">
-              {item.objects?.map((object) => (
-                <li key={object}>
-                  <Chip>{humanizeToken(object)}</Chip>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {tab === 'campaign' && aspects.length > 0 && (
-          <ul className="grid grid-cols-3 gap-3">
-            {aspects.map((aspect) => (
-              <li key={aspect.label} className="panel overflow-hidden">
-                <img
-                  src={aspect.url}
-                  alt={`${aspect.label} campaign export`}
-                  loading="lazy"
-                  decoding="async"
-                  className="aspect-square w-full object-cover bg-sunken"
-                />
-                <div className="px-2 py-1.5 rule-t">
-                  <span className="label">{aspect.label}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+        </div>
       </div>
     </Modal>
   );
@@ -177,8 +146,6 @@ export default function Search() {
       query: q,
       use_cloudinary_hybrid: override?.use_cloudinary_hybrid ?? hybrid,
       project_id: projectId || null,
-      // Sent only when set. The CDN treats an empty string as a literal tag
-      // filter, so it has to be omitted rather than blanked.
       cloudinary_tag: tag.trim() || null,
       min_score: Number(minScore),
       top_k: Number(topK),
@@ -193,83 +160,80 @@ export default function Search() {
   };
 
   return (
-    <div className="p-4 lg:p-6 space-y-4">
-      {/* Query console */}
-      <div className="panel p-3 space-y-3">
+    <div className="p-6 sm:p-10 lg:p-14 space-y-12 max-w-6xl mx-auto">
+      {/* Editorial Header */}
+      <section className="space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-mono tracking-widest text-[#ff6a00] uppercase font-bold">
+              05 // HYBRID RETRIEVAL ENGINE
+            </p>
+            <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-white uppercase mt-1">
+              Search
+            </h1>
+          </div>
+          <div className="flex items-center gap-3 text-xs font-mono">
+            <button
+              type="button"
+              onClick={() => setHybrid((v) => !v)}
+              className={`border px-2.5 py-1 transition-colors uppercase ${hybrid ? 'border-[#ff6a00] text-[#ff6a00] font-medium' : 'border-white/[0.1] text-neutral-500'}`}
+            >
+              HYBRID CDN INDEX: {hybrid ? 'ON' : 'OFF'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowFilters((v) => !v)}
+              className={`border px-2.5 py-1 transition-colors uppercase ${showFilters || filtersActive ? 'border-white text-white font-medium' : 'border-white/[0.1] text-neutral-500'}`}
+            >
+              FILTERS {filtersActive ? '●' : ''}
+            </button>
+          </div>
+        </div>
+
+        {/* Minimal Search Prompt Input */}
         <form
-          className="flex flex-col sm:flex-row gap-2"
+          className="pt-6 border-t border-white/[0.08]"
           onSubmit={(e) => {
             e.preventDefault();
             run();
           }}
         >
-          <div className="relative flex-1">
-            <ScanSearch
-              className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3"
-              aria-hidden="true"
-            />
-            <label htmlFor="search-query" className="sr-only">
-              Search the evidence corpus
-            </label>
+          <div className="flex items-baseline justify-between gap-4">
             <input
               id="search-query"
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Describe the scene, activity or object"
-              className="field pl-8 h-10"
+              placeholder="⌕  Describe scene, machinery, activity, or condition in natural language..."
+              className="w-full bg-transparent text-lg sm:text-xl text-white placeholder:text-neutral-500 outline-none pb-3 border-b border-white/[0.12] focus:border-[#ff6a00] transition-colors font-sans"
             />
-          </div>
-
-          <div className="flex items-center gap-2">
             <button
-              type="button"
-              onClick={() => setHybrid((v) => !v)}
-              aria-pressed={hybrid}
-              className={hybrid ? 'btn btn-signal' : 'btn btn-secondary'}
-              title="Merge the vector index with Cloudinary boolean tag filters"
+              type="submit"
+              disabled={mutation.isPending || !query.trim()}
+              className="btn btn-primary font-mono text-xs flex-shrink-0"
             >
-              <Sparkle className="w-3.5 h-3.5" aria-hidden="true" />
-              Hybrid
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowFilters((v) => !v)}
-              aria-expanded={showFilters}
-              aria-controls="search-filters"
-              className={filtersActive || showFilters ? 'btn btn-secondary' : 'btn btn-ghost'}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
-              Filters
-              {filtersActive && (
-                <span className="w-1.5 h-1.5 bg-signal-500 rounded-[1px]" aria-hidden="true" />
-              )}
-            </button>
-            <button type="submit" disabled={mutation.isPending || !query.trim()} className="btn btn-primary">
-              {mutation.isPending ? 'Searching' : 'Search'}
+              {mutation.isPending ? 'SEARCHING...' : 'SEARCH →'}
             </button>
           </div>
         </form>
 
+        {/* Collapsible Minimal Filters */}
         {showFilters && (
-          <div
-            id="search-filters"
-            className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 rule-t"
-          >
-            <Field label="Limit results">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-4 border-b border-white/[0.08] pb-6">
+            <Field label="Max Results (Top K)">
               {(p) => (
                 <input
                   {...p}
                   type="number"
                   min={1}
                   max={100}
-                  className="field field-sm value"
+                  className="field"
                   value={topK}
                   onChange={(e) => setTopK(e.target.value)}
                 />
               )}
             </Field>
-            <Field label="Minimum similarity" hint="0 to 1">
+            <Field label="Min Similarity (0-1)">
               {(p) => (
                 <input
                   {...p}
@@ -277,21 +241,21 @@ export default function Search() {
                   min={0}
                   max={1}
                   step={0.05}
-                  className="field field-sm value"
+                  className="field"
                   value={minScore}
                   onChange={(e) => setMinScore(e.target.value)}
                 />
               )}
             </Field>
-            <Field label="Project">
+            <Field label="Project Target Scope">
               {(p) => (
                 <select
                   {...p}
-                  className="field field-sm"
+                  className="field"
                   value={projectId}
                   onChange={(e) => setProjectId(e.target.value)}
                 >
-                  <option value="">All projects</option>
+                  <option value="">All Projects</option>
                   {projects?.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.name}
@@ -300,142 +264,109 @@ export default function Search() {
                 </select>
               )}
             </Field>
-            <Field
-              label="CDN tag"
-              className="sm:col-span-3"
-              hint="Matches tags already written back to Cloudinary. Applies to the CDN index, so it needs hybrid mode to affect the vector results too."
-            >
-              {(p) => (
-                <input
-                  {...p}
-                  type="text"
-                  className="field field-sm value"
-                  value={tag}
-                  onChange={(e) => setTag(e.target.value)}
-                  placeholder="verified  or  array_commissioning"
-                />
-              )}
-            </Field>
+
             {filtersActive && (
               <div className="sm:col-span-3">
-                <button type="button" onClick={clearFilters} className="btn btn-sm btn-ghost">
-                  <X className="w-3 h-3" aria-hidden="true" />
-                  Reset filters
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="text-xs font-mono text-neutral-400 hover:text-white transition-colors"
+                >
+                  RESET FILTERS
                 </button>
               </div>
             )}
           </div>
         )}
-      </div>
 
-      {/* Suggestions before a first search */}
-      {!mutation.data && !mutation.isPending && (
-        <div className="panel p-4">
-          <span className="label">Try a natural description</span>
-          <ul className="flex flex-wrap gap-1.5 mt-2.5">
-            {EXAMPLES.map((example) => (
-              <li key={example}>
+        {/* Natural Language Suggestions */}
+        {!mutation.data && !mutation.isPending && (
+          <div className="space-y-2 pt-2">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-neutral-500 block">
+              SUGGESTED QUERIES
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {EXAMPLES.map((example) => (
                 <button
+                  key={example}
                   type="button"
                   onClick={() => {
                     setQuery(example);
                     run({ query: example });
                   }}
-                  className="chip border-line bg-sunken text-ink-2 hover:border-brand-300 hover:text-brand-700 transition-colors"
+                  className="text-xs font-mono text-neutral-400 hover:text-white hover:border-[#ff6a00]/40 border border-white/[0.08] px-3 py-1.5 transition-colors text-left"
                 >
-                  {example}
+                  {example} →
                 </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
 
+      {/* Results */}
       {mutation.isPending && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3" aria-busy="true">
-          {Array.from({ length: 6 }, (_, i) => (
-            <Skeleton key={i} className="h-[132px]" />
-          ))}
+        <div className="py-20 flex flex-col items-center justify-center gap-3">
+          <div className="w-5 h-5 border border-[#ff6a00] border-t-transparent animate-spin rounded-full" />
+          <span className="font-mono text-xs uppercase tracking-widest text-neutral-400">
+            Searching vector embedding space & CDN index...
+          </span>
         </div>
       )}
 
       {mutation.isError && (
-        <ErrorState title="Search failed" detail="The retrieval request did not complete." />
+        <ErrorState title="Search Failed" detail="Could not retrieve search results from the AI pipeline." />
       )}
 
       {mutation.data && !mutation.isPending && (
-        <section className="space-y-3" aria-live="polite">
-          <div className="panel px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-1.5">
-            <span className="label">Matches</span>
-            <span className="value text-[15px] font-semibold">{results.length}</span>
-            <span className="meta">for</span>
-            <span className="value text-[13px] text-ink">{mutation.data.query}</span>
-            <div className="ml-auto flex items-center gap-2">
-              <Chip className={mutation.data.hybrid_mode ? 'chip-signal' : 'chip-neutral'}>
-                {mutation.data.hybrid_mode ? 'hybrid index' : 'vector only'}
-              </Chip>
-            </div>
+        <section className="space-y-6" aria-live="polite">
+          <div className="flex items-baseline justify-between border-b border-white/[0.08] pb-3">
+            <span className="text-xs font-mono text-neutral-400">
+              {results.length} MATCH{results.length === 1 ? '' : 'ES'} FOR “{mutation.data.query}”
+            </span>
+            <span className="text-xs font-mono text-neutral-500 uppercase">
+              {mutation.data.hybrid_mode ? 'HYBRID INDEX' : 'VECTOR ONLY'}
+            </span>
           </div>
 
           {results.length === 0 ? (
-            <div className="panel">
-              <EmptyState
-                icon={ScanSearch}
-                title="No evidence above the threshold"
-                description="Lower the minimum similarity, widen the result limit, or describe the scene differently."
-                action={
-                  filtersActive ? (
-                    <button type="button" onClick={clearFilters} className="btn btn-secondary">
-                      Reset filters
-                    </button>
-                  ) : undefined
-                }
-              />
-            </div>
+            <EmptyState
+              title="No Evidence Above Threshold"
+              description="Try lowering the minimum similarity threshold or using a different query description."
+            />
           ) : (
-            <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-10">
               {results.map((item) => (
-                <li key={item.asset_id} className="panel group flex flex-col">
-                  <button
-                    type="button"
-                    onClick={() => setDetail(item)}
-                    aria-label={`Open evidence ${item.asset_id}`}
-                    className="relative block aspect-[16/10] bg-sunken overflow-hidden text-left"
-                  >
+                <div
+                  key={item.asset_id}
+                  className="space-y-3 group cursor-pointer"
+                  onClick={() => setDetail(item)}
+                >
+                  <div className="relative aspect-[16/10] bg-black border border-white/[0.08] overflow-hidden">
                     <img
                       src={item.cloudinary_url}
                       alt={item.description}
                       loading="lazy"
                       decoding="async"
-                      className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
-                    <span className="absolute top-1.5 left-1.5 flex gap-1">
-                      <Chip className="bg-ink/75 text-white border-ink/50">
-                        {SEARCH_SOURCE_LABEL[item.search_source ?? ''] ?? 'vector'}
-                      </Chip>
+                    <span className="absolute top-2 left-2 px-2 py-0.5 bg-black/85 text-[10px] font-mono text-white border border-white/20 uppercase">
+                      {SEARCH_SOURCE_LABEL[item.search_source ?? ''] ?? 'vector'}
                     </span>
-                  </button>
+                  </div>
 
-                  <div className="p-3 flex-1 flex flex-col gap-2">
-                    <p className="text-[12.5px] text-ink leading-snug line-clamp-2">
+                  <div className="space-y-1">
+                    <p className="text-[13.5px] text-white font-normal line-clamp-2 leading-snug">
                       {item.description}
                     </p>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <Chip className="chip-brand">{humanizeToken(item.activity)}</Chip>
-                      {item.project_name && (
-                        <span className="meta truncate">{item.project_name}</span>
-                      )}
-                    </div>
-                    <div className="flex items-center justify-between gap-2 mt-auto pt-1.5 rule-t">
+                    <div className="flex items-center justify-between text-xs font-mono text-neutral-500 pt-1">
                       <ScoreReadout score={item.score} />
-                      <span className="meta">
-                        {item.timestamp ? shortDate(item.timestamp) : 'undated'}
-                      </span>
+                      {item.project_name && <span className="truncate max-w-[140px] text-neutral-400">{item.project_name}</span>}
                     </div>
                   </div>
-                </li>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
         </section>
       )}

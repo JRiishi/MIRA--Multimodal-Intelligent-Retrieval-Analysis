@@ -3,20 +3,6 @@ import { clsx } from 'clsx';
 import { statusOf } from '../lib/presentation';
 import type { MediaAsset } from '../types';
 
-/**
- * Activity density over time.
- *
- * A timeline rendered as a vertical list answers "what happened" but not "how
- * often". Field oversight needs the second question: are captures arriving
- * steadily, did collection stop for a fortnight, is work bunching at the end
- * of the month. This is a stacked day-density strip, which answers it in one
- * glance and costs one SVG.
- *
- * Bucketing adapts to the span: hourly for under a week, daily for under a
- * year, monthly beyond that. A fixed day bucket would render a two-year project
- * as a single crowded column.
- */
-
 type Bucket = 'hour' | 'day' | 'month';
 
 const DAY_MS = 86_400_000;
@@ -70,7 +56,7 @@ export default function ActivityDensity({
       entry.total += 1;
       const status = statusOf(asset);
       if (status.inFlight) {
-        /* in flight: neither ready nor needing a human */
+        /* in flight */
       } else if (status.needsHuman) {
         entry.needsHuman += 1;
       } else {
@@ -87,8 +73,6 @@ export default function ActivityDensity({
 
     const peak = Math.max(1, ...[...counts.values()].map((v) => v.total));
 
-    // Gap detection: consecutive empty buckets longer than a third of the
-    // window mean a collection stop, which is exactly what oversight looks for.
     let longestGap = 0;
     let run = 0;
     for (const k of slots) {
@@ -105,31 +89,31 @@ export default function ActivityDensity({
 
   if (!model) {
     return (
-      <div className={clsx('panel p-4', className)}>
-        <span className="label">Collection cadence</span>
-        <p className="text-[12.5px] text-ink-3 mt-2">No dated captures yet.</p>
+      <div className={clsx('p-4 border border-white/[0.08]', className)}>
+        <p className="text-xs text-neutral-500 font-mono">No dated captures available.</p>
       </div>
     );
   }
 
-  const { slots, counts, peak, bucket, longestGap } = model;
-  // Never render more bars than can carry a pixel, so long spans stay cheap.
+  const { slots, counts, peak, bucket } = model;
   const step = slots.length > 400 ? Math.ceil(slots.length / 400) : 1;
   const visible = slots.filter((_, i) => i % step === 0);
 
   return (
-    <div className={clsx('panel p-4', className)}>
-      <div className="flex items-baseline justify-between gap-3 mb-3">
-        <span className="label">Collection cadence</span>
-        <span className="meta">
-          {bucket === 'hour' ? 'hourly' : bucket === 'day' ? 'daily' : 'monthly'}
+    <div className={clsx('p-4 border border-white/[0.08]', className)}>
+      <div className="flex items-baseline justify-between gap-3 mb-4">
+        <span className="text-[10.5px] font-mono tracking-widest text-neutral-500 uppercase">
+          TEMPORAL COLLECTION CADENCE
+        </span>
+        <span className="text-xs font-mono text-neutral-400 uppercase">
+          {bucket === 'hour' ? 'HOURLY' : bucket === 'day' ? 'DAILY' : 'MONTHLY'}
         </span>
       </div>
 
       <div
-        className="flex items-end gap-[1px] h-14 mb-2"
+        className="flex items-end gap-[1.5px] h-14 mb-2"
         role="img"
-        aria-label={`Capture density by ${bucket}: ${model.dated.length} captures, longest gap ${longestGap} ${bucket}s`}
+        aria-label={`Capture density by ${bucket}: ${model.dated.length} captures`}
       >
         {visible.map((key) => {
           const entry = counts.get(key);
@@ -155,10 +139,9 @@ export default function ActivityDensity({
                 )
               }
               className={clsx(
-                'flex-1 min-w-[2px] rounded-[1px] flex flex-col justify-end overflow-hidden',
-                'transition-opacity duration-150',
-                !entry && 'opacity-40',
-                entry && 'hover:opacity-100 opacity-85 cursor-pointer',
+                'flex-1 min-w-[2px] flex flex-col justify-end overflow-hidden transition-opacity',
+                !entry && 'opacity-20',
+                entry && 'hover:opacity-100 opacity-80 cursor-pointer',
               )}
               style={{ height: h }}
               title={
@@ -166,47 +149,35 @@ export default function ActivityDensity({
                   ? `${bucketLabel(key, bucket)}: ${total} capture${total === 1 ? '' : 's'}`
                   : `${bucketLabel(key, bucket)}: no captures`
               }
-              aria-label={
-                entry
-                  ? `${bucketLabel(key, bucket)}: ${total} captures`
-                  : `${bucketLabel(key, bucket)}: no captures`
-              }
             >
-              <span className="block w-full bg-signal-400" style={{ height: humanH }} />
-              <span className="block w-full bg-brand-300" style={{ height: inFlightH }} />
-              <span className="block w-full bg-ok-500" style={{ height: readyH }} />
+              <span className="block w-full bg-neutral-400" style={{ height: humanH }} />
+              <span className="block w-full bg-neutral-600" style={{ height: inFlightH }} />
+              <span className="block w-full bg-white" style={{ height: readyH }} />
             </button>
           );
         })}
       </div>
 
-      <div className="flex items-baseline justify-between mb-3">
-        <span className="label">{bucketLabel(model.minKey, bucket)}</span>
-        <span className="label">{bucketLabel(model.maxKey, bucket)}</span>
+      <div className="flex items-baseline justify-between pt-1 border-t border-white/[0.08] text-[10px] font-mono text-neutral-500">
+        <span>{bucketLabel(model.minKey, bucket)}</span>
+        <span>{bucketLabel(model.maxKey, bucket)}</span>
       </div>
 
-      {longestGap >= 3 && (
-        <p className="meta mb-3 px-2.5 py-1.5 bg-caution-50 border border-caution-100 text-caution-700">
-          Longest gap without a capture: {longestGap} {bucket}
-          {longestGap === 1 ? '' : 's'}. Collection may have paused.
-        </p>
-      )}
-
-      <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-3 rule-t">
-        <li className="flex items-center gap-1.5">
-          <span className="w-2 h-2 bg-ok-500" aria-hidden="true" />
-          <span className="label">settled</span>
-        </li>
-        <li className="flex items-center gap-1.5">
-          <span className="w-2 h-2 bg-brand-300" aria-hidden="true" />
-          <span className="label">in pipeline</span>
-        </li>
-        <li className="flex items-center gap-1.5">
-          <span className="w-2 h-2 bg-signal-400" aria-hidden="true" />
-          <span className="label">needs decision</span>
-        </li>
-        <li className="meta ml-auto">peak {peak} per {bucket}</li>
-      </ul>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-3 border-t border-white/[0.08] text-xs font-mono text-neutral-400">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 bg-white" />
+          <span>VERIFIED</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 bg-neutral-600" />
+          <span>IN PIPELINE</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 bg-neutral-400" />
+          <span>NEEDS DECISION</span>
+        </div>
+        <span className="ml-auto text-neutral-500">PEAK: {peak} / {bucket.toUpperCase()}</span>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { clsx } from 'clsx';
-import { ChevronRight, User } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 
 interface ChatMessageRendererProps {
   message: string;
@@ -8,11 +8,7 @@ interface ChatMessageRendererProps {
 }
 
 /**
- * Renders a grounded assistant answer.
- *
- * Deliberately restrained: the answer is plain prose, so it is not dressed up in
- * gradients, avatars or quotation chrome. Inline code is supported because
- * answers frequently cite pipeline fields such as `routing_confidence`.
+ * Editorial intelligence message renderer with clean typography and zero chat bubbles.
  */
 export const ChatMessageRenderer: React.FC<ChatMessageRendererProps> = ({ message, role }) => {
   const [copied, setCopied] = useState(false);
@@ -31,51 +27,78 @@ export const ChatMessageRenderer: React.FC<ChatMessageRendererProps> = ({ messag
   return (
     <div
       className={clsx(
-        'panel p-3.5',
-        isUser ? 'bg-rail border-rail' : 'bg-surface',
+        'group relative py-4 border-b border-white/[0.06] transition-colors',
+        isUser ? 'bg-transparent' : 'bg-white/[0.01]',
       )}
     >
-      <div className="flex items-center gap-2 mb-2">
-        <span
-          className={clsx(
-            'w-5 h-5 rounded-[2px] flex items-center justify-center flex-shrink-0',
-            isUser ? 'bg-rail-3 text-rail-ink' : 'bg-brand-600 text-white',
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-neutral-500">
+            {isUser ? 'YOU' : 'INTELLIGENCE'}
+          </span>
+          {!isUser && (
+            <span className="text-[10px] font-mono text-neutral-400 border border-white/[0.1] px-1.5 py-0.2">
+              GROUNDED
+            </span>
           )}
-          aria-hidden="true"
-        >
-          {isUser ? <User className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-        </span>
-        <span
-          className={clsx(
-            'font-label text-[10px] uppercase tracking-[0.16em]',
-            isUser ? 'text-rail-ink-2' : 'text-ink-3',
-          )}
-        >
-          {isUser ? 'Question' : 'Grounded answer'}
-        </span>
+        </div>
         <button
           type="button"
           onClick={copy}
-          className={clsx(
-            'btn btn-sm btn-ghost ml-auto -my-1',
-            isUser ? 'text-rail-ink-2 hover:text-rail-ink hover:bg-rail-3' : '',
-          )}
+          className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-[11px] font-mono text-neutral-500 hover:text-neutral-300"
+          title="Copy message"
         >
-          {copied ? 'Copied' : 'Copy'}
+          {copied ? (
+            <>
+              <Check className="w-3 h-3 text-white" />
+              <span>COPIED</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-3 h-3" />
+              <span>COPY</span>
+            </>
+          )}
         </button>
       </div>
 
-      <div
-        className={clsx(
-          'text-[13px] leading-relaxed',
-          isUser ? 'text-rail-ink' : 'text-ink-2',
-        )}
-      >
-        {renderInlineCode(message)}
+      <div className={clsx('text-[14px] leading-relaxed space-y-2', isUser ? 'text-white font-medium' : 'text-neutral-300')}>
+        {renderRichMessage(message)}
       </div>
     </div>
   );
 };
+
+/** Formats message with line breaks, bullets, and inline code blocks */
+function renderRichMessage(text: string): React.ReactNode {
+  const paragraphs = text.split(/\n\n+/);
+  return paragraphs.map((para, pIdx) => {
+    const lines = para.split('\n');
+    return (
+      <div key={pIdx} className="space-y-1">
+        {lines.map((line, lIdx) => {
+          const isBullet = line.trim().startsWith('- ') || line.trim().startsWith('* ');
+          const content = isBullet ? line.trim().substring(2) : line;
+
+          return (
+            <div
+              key={lIdx}
+              className={clsx(
+                isBullet && 'flex items-start gap-2 pl-3',
+                'min-h-[1.4em]',
+              )}
+            >
+              {isBullet && (
+                <span className="w-1 h-1 rounded-none bg-neutral-400 mt-2.5 flex-shrink-0" aria-hidden="true" />
+              )}
+              <span className="flex-1">{renderInlineCode(content)}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  });
+}
 
 /** Splits on backticks so cited field names render as code without a markdown lib. */
 function renderInlineCode(text: string): React.ReactNode {
@@ -85,7 +108,7 @@ function renderInlineCode(text: string): React.ReactNode {
       return (
         <code
           key={index}
-          className="value text-[12px] px-1 py-0.5 bg-sunken border border-line rounded-[2px] text-ink"
+          className="font-mono text-[12px] px-1 py-0.5 bg-white/[0.06] border border-white/[0.1] text-white mx-0.5"
         >
           {part.slice(1, -1)}
         </code>

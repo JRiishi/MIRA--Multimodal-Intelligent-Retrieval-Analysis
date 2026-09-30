@@ -1,66 +1,74 @@
 import { useEffect, useRef, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Menu, X, RefreshCw, Check, Command } from 'lucide-react';
+import { NavLink, Link, Outlet, useLocation } from 'react-router-dom';
+import { Menu, X, RefreshCw, Command } from 'lucide-react';
 import { clsx } from 'clsx';
 import { navigation } from './navigation';
-import { useProjects } from '../../hooks/projects';
 import { useMediaLibrary } from '../../hooks/media';
 import { statusOf } from '../../lib/presentation';
 import AmbientField from '../AmbientField';
 import CommandPalette from '../CommandPalette';
 import RefetchBar from '../RefetchBar';
 
-/** Geometric reticle mark. Built from primitives, not an imported glyph. */
-function Mark({ size = 22 }: { size?: number }) {
+/** Architectural Minimalist MIRA Emblem */
+function MiraLogo({ size = 18 }: { size?: number }) {
   return (
-    <span
-      className="relative inline-flex items-center justify-center flex-shrink-0"
+    <div
+      className="relative flex items-center justify-center flex-shrink-0"
       style={{ width: size, height: size }}
       aria-hidden="true"
     >
-      <span
-        className="absolute inset-0 border border-brand-300/70 rounded-[1px]"
-        style={{ transform: 'rotate(45deg)' }}
-      />
-      <span className="w-[3px] h-[3px] bg-brand-300 rounded-[1px]" />
-    </span>
+      <div className="w-full h-full border border-white/60 flex items-center justify-center">
+        <div className="w-1.5 h-1.5 bg-[#ff6a00]" />
+      </div>
+    </div>
   );
 }
 
-function RailNav({ onNavigate }: { onNavigate?: () => void }) {
+function RailNav({ reviewCount = 0, onNavigate }: { reviewCount?: number; onNavigate?: () => void }) {
   return (
-    <nav aria-label="Main" className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto">
-      {navigation.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            clsx(
-              'group relative flex items-center gap-2.5 px-2.5 py-2 rounded-[var(--radius-control)] transition-colors duration-100',
-              isActive
-                ? 'bg-rail-3 text-rail-ink'
-                : 'text-rail-ink-2 hover:bg-rail-2 hover:text-rail-ink',
-            )
-          }
-        >
-          {({ isActive }) => (
-            <>
-              {/* Active marker is a shape, not a coloured dot. */}
-              <span
-                className={clsx(
-                  'absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4',
-                  isActive ? 'bg-brand-300' : 'bg-transparent',
+    <nav aria-label="Main Navigation" className="flex-1 px-3 py-6 space-y-1 overflow-y-auto">
+      <div className="text-[9.5px] font-mono tracking-widest text-neutral-500 uppercase mb-3 px-3">
+        SYSTEM // WORKSPACE
+      </div>
+      {navigation.map((item) => {
+        const isReview = item.to === '/review';
+        return (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              clsx(
+                'group flex items-center justify-between px-3 py-2.5 transition-colors text-[12px] font-mono tracking-tight',
+                isActive
+                  ? 'text-white font-medium bg-white/[0.05] border-l-2 border-[#ff6a00]'
+                  : 'text-neutral-400 hover:text-white hover:bg-white/[0.02] border-l-2 border-transparent',
+              )
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span
+                    className={clsx(
+                      'w-1.5 h-1.5 transition-colors',
+                      isActive ? 'bg-[#ff6a00]' : 'bg-neutral-700 group-hover:bg-neutral-400',
+                    )}
+                    aria-hidden="true"
+                  />
+                  <span className="uppercase truncate">{item.name}</span>
+                </div>
+
+                {isReview && reviewCount > 0 && (
+                  <span className="px-1.5 py-0.2 text-[9.5px] font-mono border border-[#ff6a00]/40 text-[#ff6a00] bg-[#ff6a00]/10">
+                    {reviewCount}
+                  </span>
                 )}
-                aria-hidden="true"
-              />
-              <item.icon className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
-              <span className="text-[13px] font-medium leading-none truncate">{item.name}</span>
-              {isActive && <span className="sr-only">(current page)</span>}
-            </>
-          )}
-        </NavLink>
-      ))}
+              </>
+            )}
+          </NavLink>
+        );
+      })}
     </nav>
   );
 }
@@ -73,11 +81,8 @@ export default function AppLayout() {
   const closeRef = useRef<HTMLButtonElement>(null);
   const wasOpenRef = useRef(false);
 
-  const { data: projects } = useProjects();
   const { data: media, isFetching, refetch } = useMediaLibrary();
 
-  // Close the drawer on navigation. Adjusting during render avoids a
-  // cascading extra render.
   const [lastPath, setLastPath] = useState(location.pathname);
   if (lastPath !== location.pathname) {
     setLastPath(location.pathname);
@@ -110,165 +115,182 @@ export default function AppLayout() {
   const active = navigation.find((n) => location.pathname.startsWith(n.to));
 
   return (
-    <div className="flex h-[100dvh] bg-canvas overflow-hidden">
+    <div className="flex h-[100dvh] bg-[#050505] text-[#ffffff] overflow-hidden selection:bg-[#ff6a00] selection:text-black">
       <AmbientField />
       <a href="#main-content" className="skip-link">
         Skip to content
       </a>
 
-      {/* Instrument rail */}
+      {/* Desktop Architectural Sidebar */}
       <aside
-        aria-label="Primary"
-        className="hidden md:flex w-[212px] flex-shrink-0 bg-rail flex-col z-[var(--z-rail)]"
+        aria-label="Primary Navigation"
+        className="hidden md:flex w-[220px] flex-shrink-0 bg-[#080808] border-r border-white/[0.08] flex-col z-[var(--z-rail)] select-none"
       >
-        <div className="h-14 flex items-center gap-2.5 px-4 border-b border-rail-2 flex-shrink-0">
-          <Mark />
-          <div className="min-w-0">
-            <div className="font-label text-[13px] tracking-[0.16em] text-rail-ink uppercase leading-none">
-              Mira
-            </div>
-            <div className="font-mono text-[9px] text-rail-ink-2/70 tracking-[0.08em] mt-1 leading-none">
-              field intelligence
-            </div>
-          </div>
+        {/* Brand Header */}
+        <div className="h-14 flex items-center justify-between px-5 border-b border-white/[0.08] flex-shrink-0">
+          <Link to="/landing" className="flex items-center gap-2.5 group">
+            <MiraLogo />
+            <span className="font-mono text-[13px] font-bold tracking-widest text-white uppercase group-hover:text-[#ff6a00] transition-colors">
+              MIRA
+            </span>
+          </Link>
+          <span className="text-[9px] font-mono text-neutral-500 border border-white/[0.1] px-1 py-0.5 uppercase">v2.4</span>
         </div>
 
-        <RailNav />
+        {/* Navigation Items */}
+        <RailNav reviewCount={review} />
 
-        <div className="px-4 py-3 border-t border-rail-2 flex-shrink-0 space-y-1.5">
+        {/* Telemetry Summary in Footer */}
+        <div className="p-4 border-t border-white/[0.08] flex-shrink-0 space-y-2 text-[10px] font-mono text-neutral-500">
           <div className="flex items-center justify-between">
-            <span className="font-label text-[9px] uppercase tracking-[0.16em] text-rail-ink-2/60">
-              Corpus
-            </span>
-            <span className="font-mono text-[10px] text-rail-ink-2 tabular-nums">
-              {assets.length}
-            </span>
+            <span className="tracking-wider">INDEXED</span>
+            <span className="text-white font-medium">{assets.length}</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="font-label text-[9px] uppercase tracking-[0.16em] text-rail-ink-2/60">
-              Targets
-            </span>
-            <span className="font-mono text-[10px] text-rail-ink-2 tabular-nums">
-              {projects?.length ?? 0}
-            </span>
+            <span className="tracking-wider">VERIFIED</span>
+            <span className="text-neutral-300">{ready}</span>
+          </div>
+          {review > 0 && (
+            <div className="flex items-center justify-between text-[#ff6a00]">
+              <span className="tracking-wider">ATTENTION</span>
+              <span className="font-bold">{review}</span>
+            </div>
+          )}
+          <div className="pt-2 border-t border-white/[0.06]">
+            <Link
+              to="/landing"
+              className="text-[10px] font-mono text-neutral-400 hover:text-[#ff6a00] flex items-center justify-between transition-colors uppercase"
+            >
+              <span>SYSTEM SPEC</span>
+              <span>LANDING →</span>
+            </Link>
           </div>
         </div>
       </aside>
 
-      {/* Mobile drawer */}
+      {/* Mobile Drawer Navigation */}
       {menuOpen && (
         <div className="fixed inset-0 z-[var(--z-drawer)] md:hidden">
-          <div className="absolute inset-0 bg-ink/60" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+          <div
+            className="absolute inset-0 bg-black/85 transition-opacity"
+            onClick={() => setMenuOpen(false)}
+            aria-hidden="true"
+          />
           <div
             id="mobile-navigation"
             role="dialog"
             aria-modal="true"
             aria-label="Navigation"
-            className="absolute inset-y-0 left-0 w-[248px] max-w-[82vw] bg-rail flex flex-col"
+            className="absolute inset-y-0 left-0 w-[250px] max-w-[85vw] bg-[#080808] border-r border-white/[0.12] flex flex-col shadow-2xl"
           >
-            <div className="h-14 flex items-center justify-between px-4 border-b border-rail-2 flex-shrink-0">
-              <div className="flex items-center gap-2.5">
-                <Mark size={20} />
-                <span className="font-label text-[13px] tracking-[0.16em] text-rail-ink uppercase">
-                  Mira
+            <div className="h-14 flex items-center justify-between px-5 border-b border-white/[0.08] flex-shrink-0">
+              <Link to="/landing" className="flex items-center gap-2.5">
+                <MiraLogo />
+                <span className="font-mono text-[13px] font-bold tracking-widest text-white uppercase">
+                  MIRA
                 </span>
-              </div>
+              </Link>
               <button
                 ref={closeRef}
                 type="button"
                 onClick={() => setMenuOpen(false)}
                 aria-label="Close navigation"
-                className="p-1.5 -mr-1.5 rounded-[var(--radius-control)] text-rail-ink-2 hover:bg-rail-3 hover:text-rail-ink transition-colors"
+                className="p-1 text-neutral-400 hover:text-white transition-colors"
               >
                 <X className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
-            <RailNav onNavigate={() => setMenuOpen(false)} />
+            <RailNav reviewCount={review} onNavigate={() => setMenuOpen(false)} />
+            <div className="p-4 border-t border-white/[0.08]">
+              <Link
+                to="/landing"
+                onClick={() => setMenuOpen(false)}
+                className="text-[11px] font-mono text-neutral-400 hover:text-[#ff6a00] flex items-center justify-between transition-colors uppercase"
+              >
+                <span>SYSTEM SPECIFICATION</span>
+                <span>LANDING →</span>
+              </Link>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Workspace. z-10 lifts content above the fixed AmbientField canvas. */}
+      {/* Main Workspace Area */}
       <div className="flex-1 flex flex-col min-w-0 relative z-10">
-        {/* Status strip: real operational state, not a decorative header. */}
-        <header className="h-14 flex-shrink-0 bg-surface/92 backdrop-blur-[2px] border-b border-line flex items-center gap-3 px-4 z-[var(--z-strip)] no-print relative">
-          <button
-            ref={toggleRef}
-            type="button"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-expanded={menuOpen}
-            aria-controls="mobile-navigation"
-            aria-label="Open navigation"
-            className="md:hidden btn btn-icon btn-ghost -ml-1"
-          >
-            <Menu className="w-4 h-4" aria-hidden="true" />
-          </button>
+        {/* Top Minimal Header */}
+        <header className="h-14 flex-shrink-0 bg-[#080808]/90 backdrop-blur-sm border-b border-white/[0.08] flex items-center justify-between px-6 z-[var(--z-strip)] no-print relative">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              ref={toggleRef}
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-expanded={menuOpen}
+              aria-controls="mobile-navigation"
+              aria-label="Open navigation"
+              className="md:hidden p-1 text-neutral-400 hover:text-white"
+            >
+              <Menu className="w-4 h-4" aria-hidden="true" />
+            </button>
 
-          <div className="min-w-0 flex-1 flex items-baseline gap-2.5">
-            <h1 className="font-label text-[13px] uppercase tracking-[0.14em] text-ink truncate">
-              {active?.name ?? 'Not found'}
-            </h1>
-            <span className="label hidden sm:inline truncate">{active?.hint}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] font-bold text-white uppercase font-mono tracking-wider">
+                {active?.name ?? 'WORKSPACE'}
+              </span>
+              <span className="text-neutral-600 font-mono text-xs">/</span>
+              <span className="text-[11px] text-neutral-400 truncate font-mono">
+                {active?.hint}
+              </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <dl className="hidden sm:flex items-center gap-4 pr-3 mr-1 border-r border-line">
-              <div className="flex items-center gap-1.5">
-                <dt className="label">Ready</dt>
-                <dd className="value text-[12px] font-semibold text-ok-600">{ready}</dd>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <dt className="label">Queue</dt>
-                <dd
-                  className={clsx(
-                    'value text-[12px] font-semibold',
-                    review > 0 ? 'text-signal-700' : 'text-ink-3',
-                  )}
-                >
-                  {review}
-                </dd>
-              </div>
-            </dl>
+          <div className="flex items-center gap-3 flex-shrink-0">
+            {/* Quick Link to Landing */}
+            <Link
+              to="/landing"
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono text-neutral-400 hover:text-[#ff6a00] border border-white/[0.08] hover:border-[#ff6a00]/40 transition-all uppercase"
+            >
+              <span>SPECIFICATION</span>
+            </Link>
 
-            {/* Command palette is the primary fast path, so it is discoverable
-                here rather than hidden in a menu. */}
+            {/* Quick Command Palette Button */}
             <button
               type="button"
               onClick={() => setPaletteOpen(true)}
-              className="btn btn-sm btn-secondary hidden md:inline-flex"
-              aria-label="Open command palette"
+              className="hidden sm:inline-flex items-center gap-2 px-2.5 py-1 text-[11px] font-mono text-neutral-400 hover:text-white border border-white/[0.08] hover:border-white/20 transition-all"
+              aria-label="Open command palette (Press ⌘K or /)"
+              title="Search & commands (⌘K or /)"
             >
               <Command className="w-3 h-3" aria-hidden="true" />
-              <span className="label">Jump</span>
-              <kbd className="label border border-line rounded-[2px] px-1 ml-0.5">K</kbd>
+              <span>⌘K</span>
             </button>
 
+            {/* Manual Refetch Trigger */}
             <button
               type="button"
-              onClick={() => void refetch()}
-              className="btn btn-sm btn-secondary"
-              aria-label="Refresh corpus"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="p-1.5 text-neutral-400 hover:text-white transition-colors"
+              aria-label="Refresh workspace data"
+              title="Refresh workspace data"
             >
-              {isFetching ? (
-                <RefreshCw className="w-3 h-3 animate-spin" aria-hidden="true" />
-              ) : (
-                <Check className="w-3 h-3" aria-hidden="true" />
-              )}
-              <span className="hidden sm:inline">Sync</span>
+              <RefreshCw
+                className={clsx('w-3.5 h-3.5', isFetching && 'animate-spin text-[#ff6a00]')}
+                aria-hidden="true"
+              />
             </button>
           </div>
         </header>
 
-        <main id="main-content" className="flex-1 min-h-0 overflow-y-auto print-reset relative">
-          <RefetchBar />
-          {/* Keyed on pathname so each view animates in once, rather than
-              replaying on every unrelated re-render. */}
-          <div key={location.pathname} className="anim-enter">
-            <Outlet />
-          </div>
+        {/* Live sync banner */}
+        <RefetchBar />
+
+        {/* Continuous Workspace Body */}
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto outline-none bg-[#050505]">
+          <Outlet />
         </main>
       </div>
 
+      {/* Global Command Palette */}
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
   );

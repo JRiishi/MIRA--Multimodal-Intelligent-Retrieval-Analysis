@@ -1,25 +1,23 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Images, FolderKanban, CheckCircle2, ArrowUpRight, ScanLine } from 'lucide-react';
+import {
+  Images,
+  ArrowRight,
+  MapPin,
+} from 'lucide-react';
 import { useProjects } from '../hooks/projects';
 import { useMediaLibrary } from '../hooks/media';
 import {
-  Metric,
-  PanelHeader,
   EmptyState,
   ErrorState,
   SkeletonMetrics,
-  SkeletonRows,
-  Chip,
   Coordinate,
-  Meter,
 } from '../components/ui';
 import ConfidenceHistogram from '../components/ConfidenceHistogram';
 import ActivityDensity from '../components/ActivityDensity';
 import {
   AUTO_ASSIGN_THRESHOLD,
   STATUS_ORDER,
-  humanizeToken,
   relativeTime,
   statusOf,
 } from '../lib/presentation';
@@ -27,19 +25,16 @@ import type { MediaAsset } from '../types';
 
 function DashboardSkeleton() {
   return (
-    <div className="p-4 lg:p-6 space-y-4" aria-busy="true" aria-label="Loading overview">
-      <SkeletonMetrics />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="panel h-[280px]" />
-        <div className="panel h-[280px]" />
+    <div className="p-6 lg:p-12 space-y-12 max-w-6xl mx-auto" aria-busy="true" aria-label="Loading overview">
+      <div className="space-y-3">
+        <div className="h-4 w-24 bg-white/[0.04] animate-pulse" />
+        <div className="h-12 w-96 bg-white/[0.04] animate-pulse" />
       </div>
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <div className="panel">
-          <SkeletonRows rows={4} />
-        </div>
-        <div className="panel">
-          <SkeletonRows rows={4} />
-        </div>
+      <SkeletonMetrics count={4} />
+      <div className="space-y-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-14 bg-white/[0.03] animate-pulse" />
+        ))}
       </div>
     </div>
   );
@@ -48,8 +43,8 @@ function DashboardSkeleton() {
 function Thumb({ asset, className }: { asset: MediaAsset; className?: string }) {
   if (!asset.cloudinary_url) {
     return (
-      <span className={`${className} bg-sunken border border-line flex items-center justify-center`}>
-        <Images className="w-3.5 h-3.5 text-ink-3" aria-hidden="true" />
+      <span className={`${className} bg-white/[0.03] border border-white/[0.08] flex items-center justify-center flex-shrink-0`}>
+        <Images className="w-3.5 h-3.5 text-neutral-600" aria-hidden="true" />
       </span>
     );
   }
@@ -59,7 +54,7 @@ function Thumb({ asset, className }: { asset: MediaAsset; className?: string }) 
       alt=""
       loading="lazy"
       decoding="async"
-      className={`${className} object-cover bg-sunken border border-line`}
+      className={`${className} object-cover bg-black border border-white/[0.08] flex-shrink-0`}
     />
   );
 }
@@ -90,7 +85,6 @@ export default function Dashboard() {
       (a) => typeof a.routing_confidence === 'number' && a.routing_confidence >= AUTO_ASSIGN_THRESHOLD,
     );
     const geoTagged = assets.filter((a) => a.image_latitude != null && a.image_longitude != null);
-    const gpsSource = assets.filter((a) => a.location_source && a.location_source !== 'NONE');
 
     return {
       assets,
@@ -100,7 +94,6 @@ export default function Dashboard() {
       inFlight,
       autoRouted,
       geoTagged,
-      gpsSource,
       ready: counts.get('READY') ?? 0,
     };
   }, [media]);
@@ -109,7 +102,7 @@ export default function Dashboard() {
     () =>
       [...stats.assets]
         .sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at))
-        .slice(0, 7),
+        .slice(0, 6),
     [stats.assets],
   );
 
@@ -117,272 +110,203 @@ export default function Dashboard() {
 
   if (error) {
     return (
-      <div className="p-4 lg:p-6">
+      <div className="p-8 max-w-4xl mx-auto">
         <ErrorState
-          title="Corpus unavailable"
-          detail="The media request failed. Confirm the API is reachable, then retry."
+          title="Corpus data unavailable"
+          detail="Failed to connect to the backend server. Please verify the API is running on port 8000 and try again."
         />
       </div>
     );
   }
 
   const total = stats.assets.length;
-  const coverage = total ? (stats.autoRouted.length / total) * 100 : 0;
-  const gpsCoverage = total ? (stats.geoTagged.length / total) * 100 : 0;
 
   return (
-    <div className="p-4 lg:p-6 space-y-4">
-      {/* Metric strip */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-        <Metric
-          label="Corpus"
-          value={total}
-          unit="assets"
-          foot={`${stats.inFlight.length} in pipeline`}
-        />
-        <Metric
-          label="Targets"
-          value={projects?.length ?? 0}
-          unit="projects"
-          foot={
-            stats.gpsSource.length > 0
-              ? `${stats.gpsSource.length} captures geo-tagged`
-              : 'no EXIF yet'
-          }
-        />
-        <Metric
-          label="Verified"
-          value={stats.ready}
-          foot={`${coverage.toFixed(0)}% above ${(AUTO_ASSIGN_THRESHOLD * 100).toFixed(0)}% threshold`}
-          tone="ok"
-        />
-        <Metric
-          label="Exceptions"
-          value={stats.exceptions.length}
-          foot={stats.exceptions.length > 0 ? 'awaiting a decision' : 'queue is clear'}
-          tone={stats.exceptions.length > 0 ? 'signal' : 'default'}
-        />
-        <Metric
-          label="Mean confidence"
-          value={stats.avg != null ? (stats.avg * 100).toFixed(1) : 'n/a'}
-          unit={stats.avg != null ? '%' : undefined}
-          foot={`${gpsCoverage.toFixed(0)}% carry coordinates`}
-        />
-      </div>
-
-      {/* Pipeline as a single dense line, not a panel. It is a status readout,
-          not something that needs its own surface. */}
-      {total > 0 && (
-        <div className="panel px-4 py-3">
-          <div className="flex flex-wrap items-baseline gap-x-5 gap-y-2 mb-2.5">
-            <span className="label-strong">Pipeline</span>
-            {STATUS_ORDER.filter((s: string) => (stats.counts.get(s) ?? 0) > 0).map((status: string) => (
-              <span key={status} className="flex items-baseline gap-1.5">
-                <span className="label">
-                  {statusOf({ processing_status: status, project_id: 'p' }).label}
-                </span>
-                <span className="value text-[12px] font-semibold">{stats.counts.get(status)}</span>
-              </span>
-            ))}
-            <span className="meta ml-auto">{total} total</span>
+    <div className="p-6 sm:p-10 lg:p-14 space-y-16 max-w-6xl mx-auto">
+      {/* Editorial Header */}
+      <section className="space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-mono tracking-widest text-[#ff6a00] uppercase font-bold">
+              00 // MULTIMODAL INTELLIGENCE PLATFORM
+            </p>
+            <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-white uppercase mt-1">
+              Field Intelligence
+            </h1>
           </div>
-          <div
-            className="flex h-2 gap-px"
-            role="img"
-            aria-label={STATUS_ORDER.filter((s: string) => (stats.counts.get(s) ?? 0) > 0)
-              .map(
-                (s: string) =>
-                  `${statusOf({ processing_status: s, project_id: 'p' }).label} ${
-                    stats.counts.get(s)
-                  }`,
-              )
-              .join(', ')}
-          >
-            {STATUS_ORDER.map((status: string) => {
-              const n = stats.counts.get(status) ?? 0;
-              if (n === 0) return null;
-              return (
-                <span
-                  key={status}
-                  style={{ flexGrow: n }}
-                  className={
-                    status === 'READY'
-                      ? 'bg-ok-500'
-                      : status === 'FAILED'
-                        ? 'bg-danger-500'
-                        : statusOf({ processing_status: status, project_id: 'p' }).inFlight
-                          ? 'bg-signal-400'
-                          : 'bg-line-strong'
-                  }
-                />
-              );
-            })}
+          <div className="flex items-center gap-3">
+            <Link to="/search" className="btn btn-sm btn-secondary font-mono text-xs">
+              SEARCH
+            </Link>
+            <Link to="/media" className="btn btn-sm btn-primary font-mono text-xs">
+              UPLOAD MEDIA →
+            </Link>
           </div>
         </div>
+
+        {/* Integrated Typographic Metrics Bar */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 pt-6 border-t border-white/[0.08]">
+          <div>
+            <div className="text-4xl sm:text-6xl font-black tracking-tight text-white font-sans">
+              {total}
+            </div>
+            <div className="text-[10px] font-mono tracking-widest text-neutral-500 uppercase mt-1">
+              TOTAL CAPTURES
+            </div>
+          </div>
+          <div>
+            <div className="text-4xl sm:text-6xl font-black tracking-tight text-white font-sans">
+              {projects?.length ?? 0}
+            </div>
+            <div className="text-[10px] font-mono tracking-widest text-neutral-500 uppercase mt-1">
+              ACTIVE WORKSPACES
+            </div>
+          </div>
+          <div>
+            <div className="text-4xl sm:text-6xl font-black tracking-tight text-white font-sans">
+              {stats.ready}
+            </div>
+            <div className="text-[10px] font-mono tracking-widest text-[#ff6a00] uppercase mt-1 font-bold">
+              VERIFIED EVIDENCE
+            </div>
+          </div>
+          <div>
+            <div className="text-4xl sm:text-6xl font-black tracking-tight text-white font-sans">
+              {stats.exceptions.length}
+            </div>
+            <div className="text-[10px] font-mono tracking-widest text-neutral-500 uppercase mt-1">
+              {stats.exceptions.length > 0 ? 'PENDING DECISION' : 'TRIAGE CLEAR'}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Review Banner if items need human decision */}
+      {stats.exceptions.length > 0 && (
+        <section className="border-y border-[#ff6a00]/30 py-4 bg-[#ff6a00]/5 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="w-2 h-2 bg-[#ff6a00]" />
+            <span className="text-[13.5px] text-neutral-200">
+              <strong className="text-white font-bold">{stats.exceptions.length} capture(s)</strong> require spatial attribution & human-in-the-loop review.
+            </span>
+          </div>
+          <Link
+            to="/review"
+            className="text-[12px] font-mono text-[#ff6a00] hover:text-white transition-colors flex items-center gap-1.5 flex-shrink-0 font-bold uppercase"
+          >
+            <span>REVIEW QUEUE</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </section>
       )}
 
-      {/* Analytics Distributions */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ConfidenceHistogram assets={stats.assets} />
-        <ActivityDensity assets={stats.assets} />
-      </div>
+      {/* Section: Project Workspaces Ledger */}
+      <section className="space-y-6">
+        <div className="flex items-baseline justify-between border-b border-white/[0.08] pb-3">
+          <div>
+            <h2 className="text-xs font-mono uppercase tracking-widest text-[#ff6a00] font-bold">
+              01 // PROJECT WORKSPACES
+            </h2>
+          </div>
+          <Link to="/projects" className="text-xs font-mono text-neutral-500 hover:text-white transition-colors">
+            ALL PROJECTS ({projects?.length ?? 0}) →
+          </Link>
+        </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {/* Exception queue: the primary action surface. */}
-        <section className="panel flex flex-col max-h-[420px]" aria-labelledby="queue-h">
-          <PanelHeader
-            title={<span id="queue-h">Exception queue</span>}
-            meta={stats.exceptions.length > 0 ? 'routing needs a human' : 'nothing waiting'}
-            actions={
-              stats.exceptions.length > 0 ? (
-                <Link to="/review" className="btn btn-sm btn-signal">
-                  Resolve
-                  <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
-                </Link>
-              ) : undefined
-            }
-          />
-
-          {stats.exceptions.length === 0 ? (
-            <EmptyState
-              icon={CheckCircle2}
-              title="Queue clear"
-              description="Every ingested capture is routed and verified."
-            />
-          ) : (
-            <ul className="overflow-y-auto flex-1">
-              {stats.exceptions.slice(0, 8).map((asset) => {
-                const s = statusOf(asset);
-                return (
-                  <li key={asset.id}>
-                    <Link
-                      to="/review"
-                      className="flex items-start gap-3 px-4 py-2.5 rule-b last:border-b-0 row-hover"
-                    >
-                      <Thumb asset={asset} className="w-10 h-10 rounded-[var(--radius-control)]" />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <Chip className={s.chip}>{s.label}</Chip>
-                          <span className="meta truncate">{humanizeToken(asset.activity)}</span>
-                        </div>
-                        <p className="meta mt-1">
-                          {asset.routing_confidence != null
-                            ? `${(asset.routing_confidence * 100).toFixed(1)}% confidence`
-                            : 'awaiting analysis'}
-                        </p>
-                      </div>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-
-        {/* Recent captures */}
-        <section className="panel flex flex-col max-h-[420px]" aria-labelledby="recent-h">
-          <PanelHeader
-            title={<span id="recent-h">Latest captures</span>}
-            actions={
-              <Link to="/media" className="btn btn-sm btn-ghost">
-                All media
-                <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
-              </Link>
-            }
-          />
-          {recent.length === 0 ? (
-            <EmptyState icon={Images} title="Nothing ingested yet" />
-          ) : (
-            <ul className="overflow-y-auto flex-1">
-              {recent.map((asset) => {
-                const s = statusOf(asset);
-                return (
-                  <li
-                    key={asset.id}
-                    className="flex items-center gap-3 px-4 py-2.5 rule-b last:border-b-0 row-hover"
-                  >
-                    <Thumb asset={asset} className="w-9 h-9 rounded-[var(--radius-control)]" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[12.5px] text-ink truncate">
-                        {asset.description || 'Awaiting visual analysis'}
-                      </p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <Coordinate lat={asset.image_latitude} lng={asset.image_longitude} />
-                        {asset.location_source && asset.location_source !== 'NONE' && (
-                          <span className="meta">{asset.location_source.toLowerCase()}</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <Chip className={s.chip}>{s.label}</Chip>
-                      <p className="meta mt-1">{relativeTime(asset.uploaded_at)}</p>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-      </div>
-
-      {/* Target coverage */}
-      <section className="panel" aria-labelledby="targets-h">
-        <PanelHeader
-          title={<span id="targets-h">Target coverage</span>}
-          meta="verified share of each project"
-          actions={
-            <Link to="/projects" className="btn btn-sm btn-ghost">
-              Manage
-              <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
-            </Link>
-          }
-        />
         {(projects?.length ?? 0) === 0 ? (
           <EmptyState
-            icon={FolderKanban}
-            title="No routing targets"
-            description="Define a project with a coordinate so the router has somewhere to send captures."
+            title="No project workspaces"
+            description="Create a project target with coordinates to begin routing field captures."
             action={
-              <Link to="/projects" className="btn btn-primary">
-                Create project
+              <Link to="/projects" className="btn btn-sm btn-primary font-mono text-xs">
+                CREATE PROJECT →
               </Link>
             }
           />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 p-3">
-            {projects?.map((project) => {
+          <div className="border-t border-white/[0.08] divide-y divide-white/[0.08]">
+            {projects?.map((project, idx) => {
               const owned = stats.assets.filter((a) => a.project_id === project.id);
               const verified = owned.filter((a) => a.processing_status === 'READY').length;
-              const share = owned.length ? verified / owned.length : 0;
               return (
-                <div key={project.id} className="p-3 border border-line rounded-[var(--radius-control)] bg-surface hover:border-line-strong transition-colors">
-                  <Link
-                    to={`/projects/${project.id}`}
-                    className="block group"
-                  >
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="text-[13px] font-medium text-ink truncate group-hover:text-brand-700">
+                <Link
+                  key={project.id}
+                  to={`/projects/${project.id}`}
+                  className="group flex flex-col sm:flex-row sm:items-center justify-between py-5 hover:bg-white/[0.015] px-2 transition-colors gap-3"
+                >
+                  <div className="flex items-baseline gap-4 min-w-0">
+                    <span className="font-mono text-xs text-neutral-600">
+                      {String(idx + 1).padStart(2, '0')}
+                    </span>
+                    <div className="min-w-0">
+                      <span className="text-xl font-bold uppercase tracking-tight text-white group-hover:text-[#ff6a00] transition-colors">
                         {project.name}
                       </span>
-                      <span className="value text-[12px] text-ink-2 flex-shrink-0">
-                        {verified}
-                        <span className="text-ink-3">/{owned.length}</span>
-                      </span>
-                    </div>
-                    <div className="mt-2">
-                      <Meter
-                        value={share}
-                        tone={share >= 0.6 ? 'ok' : share > 0 ? 'brand' : 'signal'}
-                        label={`${project.name}: ${Math.round(share * 100)} percent verified`}
-                      />
-                    </div>
-                    <p className="meta mt-1.5 truncate">
-                      {project.location_name ?? 'no location'}
-                      {project.latitude != null && (
-                        <Coordinate lat={project.latitude} lng={project.longitude} className="ml-2" />
+                      {project.location_name && (
+                        <p className="text-xs text-neutral-500 font-mono flex items-center gap-1.5 mt-0.5">
+                          <MapPin className="w-3 h-3 text-[#ff6a00]" />
+                          <span>{project.location_name}</span>
+                        </p>
                       )}
-                    </p>
-                  </Link>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-6 text-xs font-mono text-neutral-400">
+                    <span><span className="text-white font-medium">{owned.length}</span> CAPTURES</span>
+                    <span className="text-neutral-600">·</span>
+                    <span className="text-neutral-300">{verified} VERIFIED</span>
+                    <ArrowRight className="w-3.5 h-3.5 text-neutral-600 group-hover:text-[#ff6a00] group-hover:translate-x-1 transition-all" />
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Section: Recent Captures Chronology */}
+      <section className="space-y-6">
+        <div className="flex items-baseline justify-between border-b border-white/[0.08] pb-3">
+          <div>
+            <h2 className="text-xs font-mono uppercase tracking-widest text-[#ff6a00] font-bold">
+              02 // RECENT EVIDENCE CAPTURES
+            </h2>
+          </div>
+          <Link to="/media" className="text-xs font-mono text-neutral-500 hover:text-white transition-colors">
+            VIEW MEDIA LIBRARY ({total}) →
+          </Link>
+        </div>
+
+        {recent.length === 0 ? (
+          <EmptyState title="No field media ingested yet" />
+        ) : (
+          <div className="border-t border-white/[0.08] divide-y divide-white/[0.08]">
+            {recent.map((asset) => {
+              const s = statusOf(asset);
+              return (
+                <div
+                  key={asset.id}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between py-4 px-2 hover:bg-white/[0.015] transition-colors gap-3"
+                >
+                  <div className="flex items-center gap-4 min-w-0">
+                    <Thumb asset={asset} className="w-12 h-12" />
+                    <div className="min-w-0">
+                      <p className="text-[13.5px] text-white font-normal truncate">
+                        {asset.description || 'Observed field capture'}
+                      </p>
+                      <div className="flex items-center gap-3 text-[11px] text-neutral-500 font-mono mt-0.5">
+                        <Coordinate lat={asset.image_latitude} lng={asset.image_longitude} />
+                        <span>·</span>
+                        <span>{relativeTime(asset.uploaded_at)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 text-xs font-mono flex-shrink-0">
+                    <span className="border border-white/[0.1] px-2 py-0.5 text-neutral-300 uppercase">
+                      {s.label}
+                    </span>
+                  </div>
                 </div>
               );
             })}
@@ -390,10 +314,35 @@ export default function Dashboard() {
         )}
       </section>
 
-      <p className="label flex items-center gap-1.5 pt-1">
-        <ScanLine className="w-3 h-3" aria-hidden="true" />
-        routing auto-assigns at {AUTO_ASSIGN_THRESHOLD * 100}% confidence and above
-      </p>
+      {/* Section: Pipeline Distribution Analysis */}
+      <section className="space-y-6">
+        <div className="border-b border-white/[0.08] pb-3">
+          <h2 className="text-xs font-mono uppercase tracking-widest text-[#ff6a00] font-bold">
+            03 // PIPELINE TELEMETRY
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-mono text-neutral-400 uppercase tracking-wider">
+              CONFIDENCE DISTRIBUTION
+            </h3>
+            <ConfidenceHistogram assets={stats.assets} />
+          </div>
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-mono text-neutral-400 uppercase tracking-wider">
+              TEMPORAL ACTIVITY
+            </h3>
+            <ActivityDensity assets={stats.assets} />
+          </div>
+        </div>
+      </section>
+
+      {/* Subtle Footer */}
+      <footer className="pt-8 border-t border-white/[0.08] flex items-center justify-between text-xs font-mono text-neutral-600">
+        <span>MIRA MULTIMODAL INTELLIGENCE</span>
+        <span>AUTO-ASSIGN THRESHOLD: {AUTO_ASSIGN_THRESHOLD * 100}%</span>
+      </footer>
     </div>
   );
 }

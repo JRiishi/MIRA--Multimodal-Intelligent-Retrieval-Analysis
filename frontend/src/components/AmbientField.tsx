@@ -85,11 +85,11 @@ void main() {
   // Radial falloff keeps the centre calm where content sits.
   float falloff = smoothstep(1.15, 0.15, length(p));
 
-  // Cool graphite to deep petrol. No purple, no glow.
-  vec3 cool = vec3(0.925, 0.937, 0.949);
-  vec3 deep = vec3(0.788, 0.855, 0.851);
-  vec3 col = mix(cool, deep, v * 0.34);
-  col = mix(cool, col, falloff * 0.85);
+  // Pure monochromatic near-black neutral texture
+  vec3 cool = vec3(0.039, 0.039, 0.039);
+  vec3 deep = vec3(0.048, 0.048, 0.048);
+  vec3 col = mix(cool, deep, v * 0.35);
+  col = mix(cool, col, falloff * 0.6);
 
   outColor = vec4(col, 1.0);
 }`;

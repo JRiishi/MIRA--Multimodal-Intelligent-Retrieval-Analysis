@@ -25,19 +25,6 @@ interface Command {
   keywords: string;
 }
 
-/**
- * Command palette.
- *
- * The brief for this product is that a reviewer should never have to look
- * around to find a control. The navigation rail covers six destinations, but a
- * field team with forty projects and thousands of captures cannot use a rail to
- * reach "the capture from Kayalapuram last Tuesday". This is the fast path:
- * one keystroke from anywhere, fuzzy over views, projects and captures.
- *
- * Deliberately no fuzzy-match library. The corpus is small enough that a
- * subsequence scorer over a few thousand rows is instant, and it keeps the
- * bundle lean.
- */
 function score(haystack: string, needle: string): number {
   if (!needle) return 1;
   const h = haystack.toLowerCase();
@@ -47,7 +34,6 @@ function score(haystack: string, needle: string): number {
   if (direct === 0) return 1000;
   if (direct > 0) return 700 - direct;
 
-  // Subsequence fallback: every needle char appears in order.
   let hi = 0;
   let hits = 0;
   for (const ch of n) {
@@ -85,8 +71,6 @@ export default function CommandPalette({
   const { data: projects } = useProjects();
   const { data: media } = useMediaLibrary();
 
-  // Cmd/Ctrl+K toggles. Guarded so it does not fire inside a text field where
-  // the user might be selecting with the keyboard.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const isPaletteKey =
@@ -96,14 +80,13 @@ export default function CommandPalette({
         setOpen(!open);
         return;
       }
-      // "/" as a single-key shortcut, the convention reviewers already know.
       const target = event.target as HTMLElement | null;
-      const typing =
-        target?.tagName === 'INPUT' ||
-        target?.tagName === 'TEXTAREA' ||
-        target?.tagName === 'SELECT' ||
-        target?.isContentEditable;
-      if (event.key === '/' && !typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const isTyping =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable);
+      if (event.key === '/' && !isTyping) {
         event.preventDefault();
         setOpen(true);
       }
@@ -112,141 +95,136 @@ export default function CommandPalette({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [open, setOpen]);
 
-  // Reset the query and cursor when the palette opens, adjusted during render
-  // rather than in an effect so it does not cost an extra render pass.
-  const [wasOpen, setWasOpen] = useState(open);
-  if (open !== wasOpen) {
-    setWasOpen(open);
+  useEffect(() => {
     if (open) {
       setQuery('');
       setCursor(0);
+      setTimeout(() => inputRef.current?.focus(), 20);
     }
-  }
-
-  // Focus after the dialog paints, otherwise the mount steals it.
-  const focusRaf = useRef<number | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    focusRaf.current = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => {
-      if (focusRaf.current !== null) cancelAnimationFrame(focusRaf.current);
-    };
   }, [open]);
 
-  const commands = useMemo<Command[]>(() => {
-    const goTo = (to: string) => (): void => {
-      navigate(to);
-      setOpen(false);
-    };
+  const commands: Command[] = useMemo(() => {
+    const list: Command[] = [];
 
-    const list: Command[] = navigation.map((item) => ({
-      id: `nav-${item.to}`,
-      label: item.name,
-      hint: item.hint,
-      group: 'Go to' as const,
-      icon: item.icon,
-      run: goTo(item.to),
-      keywords: `${item.name} ${item.hint}`,
-    }));
-
-    for (const project of projects ?? []) {
+    for (const item of navigation) {
       list.push({
-        id: `project-${project.id}`,
-        label: project.name,
-        hint: project.location_name ?? undefined,
-        group: 'Project',
-        icon: FolderKanban,
+        id: `nav-${item.to}`,
+        label: item.name,
+        hint: item.hint,
+        group: 'Go to',
+        icon: item.icon,
         run: () => {
-          navigate(`/projects/${project.id}`);
+          navigate(item.to);
           setOpen(false);
         },
-        keywords: `${project.name} ${project.description ?? ''} ${(project.tags ?? []).join(' ')} ${
-          project.location_name ?? ''
-        }`,
+        keywords: `${item.name} ${item.hint} navigation view`,
       });
     }
 
-    for (const asset of media ?? []) {
-      const status = statusOf(asset);
-      list.push({
-        id: `asset-${asset.id}`,
-        label: asset.description || humanizeToken(asset.activity) || asset.id,
-        hint: status.label,
-        group: 'Capture',
-        icon: ImageIcon,
-        run: () => {
-          if (asset.project_id) navigate(`/projects/${asset.project_id}`);
-          setOpen(false);
-        },
-        keywords: `${asset.description ?? ''} ${asset.activity ?? ''} ${asset.scene ?? ''} ${
-          asset.id
-        } ${asset.location_source ?? ''}`,
-      });
+    if (projects) {
+      for (const p of projects) {
+        const place = p.location_name ? ` · ${p.location_name}` : '';
+        list.push({
+          id: `project-${p.id}`,
+          label: p.name,
+          hint: `Workspace${place}`,
+          group: 'Project',
+          icon: FolderKanban,
+          run: () => {
+            navigate(`/projects/${p.id}`);
+            setOpen(false);
+          },
+          keywords: `${p.name} ${p.location_name ?? ''} ${(p.tags ?? []).join(' ')} project workspace`,
+        });
+      }
     }
 
-    list.push(
-      {
-        id: 'action-search',
-        label: 'Search the corpus',
-        hint: 'natural language, hybrid index',
-        group: 'Action',
-        icon: ScanSearch,
-        run: () => {
-          navigate('/search');
-          setOpen(false);
-        },
-        keywords: 'search find query evidence retrieve',
+    if (media) {
+      const reviewFirst = [...media].sort((a, b) => {
+        const ra = statusOf(a).needsHuman ? 0 : 1;
+        const rb = statusOf(b).needsHuman ? 0 : 1;
+        return ra - rb;
+      });
+
+      for (const a of reviewFirst.slice(0, 30)) {
+        const place = a.location_source ? ` · ${a.location_source}` : '';
+        const title = a.description
+          ? a.description.slice(0, 48)
+          : humanizeToken(a.activity ?? a.id);
+        list.push({
+          id: `media-${a.id}`,
+          label: title,
+          hint: `${humanizeToken(a.processing_status)}${place}`,
+          group: 'Capture',
+          icon: ImageIcon,
+          run: () => {
+            if (a.project_id) {
+              navigate(`/projects/${a.project_id}?asset=${a.id}`);
+            } else {
+              navigate('/media');
+            }
+            setOpen(false);
+          },
+          keywords: `${a.id} ${a.description ?? ''} ${a.activity ?? ''} capture photo`,
+        });
+      }
+    }
+
+    list.push({
+      id: 'action-quick-search',
+      label: 'Open Semantic Search',
+      hint: 'Natural language search query',
+      group: 'Action',
+      icon: ScanSearch,
+      run: () => {
+        navigate('/search');
+        setOpen(false);
       },
-      {
-        id: 'action-review',
-        label: 'Go to review queue',
-        hint: 'captures awaiting a decision',
-        group: 'Action',
-        icon: UserCheck,
-        run: () => {
-          navigate('/review');
-          setOpen(false);
-        },
-        keywords: 'review queue unassigned assign decision',
+      keywords: 'search semantic query find filter',
+    });
+
+    list.push({
+      id: 'action-triage',
+      label: 'Review Pending Exceptions',
+      hint: 'Routing review queue',
+      group: 'Action',
+      icon: UserCheck,
+      run: () => {
+        navigate('/review');
+        setOpen(false);
       },
-    );
+      keywords: 'review triage unassigned needs review decision',
+    });
 
     return list;
-  }, [navigate, projects, media, setOpen]);
+  }, [projects, media, navigate, setOpen]);
 
   const results = useMemo(() => {
-    if (!query.trim()) {
-      // Without a query, surface the navigation and the two most urgent
-      // actions rather than an arbitrary prefix of the corpus.
-      return commands.filter((c) => c.group === 'Go to' || c.group === 'Action').slice(0, 10);
-    }
+    if (!query.trim()) return commands.slice(0, 16);
     return commands
-      .map((command) => ({ command, s: score(`${command.label} ${command.keywords}`, query) }))
-      .filter((r) => r.s > 0)
+      .map((cmd) => ({ cmd, s: score(`${cmd.label} ${cmd.keywords} ${cmd.hint ?? ''}`, query) }))
+      .filter((entry) => entry.s > 0)
       .sort((a, b) => b.s - a.s)
-      .slice(0, 24)
-      .map((r) => r.command);
+      .slice(0, 20)
+      .map((entry) => entry.cmd);
   }, [commands, query]);
 
   useEffect(() => {
-    const active = listRef.current?.querySelector('[data-active="true"]');
-    active?.scrollIntoView({ block: 'nearest' });
-  }, [cursor, results]);
+    if (results.length === 0) {
+      setCursor(0);
+      return;
+    }
+    setCursor((c) => Math.min(c, results.length - 1));
+  }, [results]);
 
-  /**
-   * Group headers are derived by comparing neighbours, so no mutable state is
-   * left behind if render is interrupted.
-   */
-  const rows = useMemo(
-    () =>
-      results.map((command, i) => ({
-        command,
-        showGroup: i === 0 || results[i - 1].group !== command.group,
-      })),
-    [results],
-  );
-
-  if (!open) return null;
+  const rows = useMemo(() => {
+    let lastGroup: string | null = null;
+    return results.map((command) => {
+      const showGroup = command.group !== lastGroup;
+      lastGroup = command.group;
+      return { command, showGroup };
+    });
+  }, [results]);
 
   const commit = (command: Command | undefined) => {
     if (!command) return;
@@ -275,10 +253,12 @@ export default function CommandPalette({
     }
   };
 
+  if (!open) return null;
+
   return (
-    <div className="fixed inset-0 z-[var(--z-overlay)] flex items-start justify-center pt-[12vh] px-4">
+    <div className="fixed inset-0 z-[var(--z-overlay)] flex items-start justify-center pt-[10vh] px-4">
       <div
-        className="absolute inset-0 bg-ink/50"
+        className="absolute inset-0 bg-black/80 transition-opacity"
         onClick={() => setOpen(false)}
         aria-hidden="true"
       />
@@ -287,11 +267,11 @@ export default function CommandPalette({
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="relative w-full max-w-xl panel shadow-[var(--shadow-pop)] flex flex-col overflow-hidden anim-enter"
+        className="relative w-full max-w-2xl bg-[#0d0d0d] border border-white/[0.12] rounded-none shadow-2xl flex flex-col overflow-hidden anim-fade"
         onKeyDown={onKeyDown}
       >
-        <div className="flex items-center gap-2.5 px-3.5 h-12 rule-b flex-shrink-0">
-          <SearchIcon className="w-4 h-4 text-ink-3 flex-shrink-0" aria-hidden="true" />
+        <div className="flex items-center gap-3 px-5 h-14 border-b border-white/[0.08] flex-shrink-0">
+          <SearchIcon className="w-4 h-4 text-neutral-400 flex-shrink-0" aria-hidden="true" />
           <label htmlFor="palette-input" className="sr-only">
             Search views, projects and captures
           </label>
@@ -303,29 +283,31 @@ export default function CommandPalette({
               setQuery(e.target.value);
               setCursor(0);
             }}
-            placeholder="Jump to a view, project or capture"
-            className="flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink-3 outline-none"
+            placeholder="Type a command, project name, or search keyword..."
+            className="flex-1 bg-transparent text-[14px] text-white placeholder:text-neutral-500 outline-none font-sans"
             autoComplete="off"
             spellCheck={false}
           />
-          <kbd className="label border border-line rounded-[2px] px-1.5 py-1 flex-shrink-0">esc</kbd>
+          <kbd className="font-mono text-[10px] text-neutral-500 border border-white/[0.1] px-1.5 py-0.5">
+            ESC
+          </kbd>
         </div>
 
         {results.length === 0 ? (
-          <div className="px-3.5 py-10 text-center">
-            <p className="text-[13px] text-ink-2">Nothing matches “{query}”</p>
-            <p className="text-[11.5px] text-ink-3 mt-1">
-              Try a project name, a place, or words that would appear in a capture description.
+          <div className="px-5 py-12 text-center">
+            <p className="text-[13.5px] text-neutral-400 font-medium">No results for “{query}”</p>
+            <p className="text-[12px] text-neutral-600 mt-1 font-mono">
+              Search by project name, location, or tag.
             </p>
           </div>
         ) : (
-          <ul ref={listRef} className="max-h-[52vh] overflow-y-auto py-1.5">
+          <ul ref={listRef} className="max-h-[55vh] overflow-y-auto p-2 space-y-0.5">
             {rows.map(({ command, showGroup }, index) => {
               const active = index === cursor;
               return (
                 <li key={command.id}>
                   {showGroup && (
-                    <div className="label px-3.5 pt-2.5 pb-1.5 border-b border-line mb-1 first:border-b-0 first:pt-1.5">
+                    <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-600 px-3 pt-3 pb-1">
                       {command.group}
                     </div>
                   )}
@@ -335,32 +317,37 @@ export default function CommandPalette({
                     onMouseEnter={() => setCursor(index)}
                     onClick={() => commit(command)}
                     className={clsx(
-                      'w-full flex items-center gap-2.5 px-3.5 py-2 text-left transition-colors duration-100',
-                      active ? 'bg-brand-50' : 'hover:bg-sunken',
+                      'w-full flex items-center gap-3 px-3 py-2 text-left transition-colors',
+                      active
+                        ? 'bg-white text-black'
+                        : 'text-neutral-300 hover:text-white hover:bg-white/[0.03]',
                     )}
                   >
-                    <command.icon
-                      className={clsx('w-3.5 h-3.5 flex-shrink-0', active ? 'text-brand-700' : 'text-ink-3')}
-                      aria-hidden="true"
-                    />
-                    <span
+                    <div
                       className={clsx(
-                        'text-[13px] truncate flex-1',
-                        active ? 'text-brand-800' : 'text-ink',
+                        'w-5 h-5 flex items-center justify-center flex-shrink-0',
+                        active ? 'text-black' : 'text-neutral-500',
                       )}
                     >
+                      <command.icon className="w-3.5 h-3.5" aria-hidden="true" />
+                    </div>
+                    <span className="text-[13px] font-medium truncate flex-1">
                       {command.label}
                     </span>
                     {command.hint && (
-                      <span className="meta truncate max-w-[42%] flex-shrink-0">{command.hint}</span>
+                      <span
+                        className={clsx(
+                          'font-mono text-[11px] truncate max-w-[40%] flex-shrink-0',
+                          active ? 'text-neutral-700' : 'text-neutral-500',
+                        )}
+                      >
+                        {command.hint}
+                      </span>
                     )}
                     {active ? (
-                      <CornerDownLeft
-                        className="w-3 h-3 text-brand-600 flex-shrink-0"
-                        aria-hidden="true"
-                      />
+                      <CornerDownLeft className="w-3 h-3 text-black flex-shrink-0" aria-hidden="true" />
                     ) : (
-                      <ArrowRight className="w-3 h-3 text-ink-3 opacity-0" aria-hidden="true" />
+                      <ArrowRight className="w-3 h-3 text-neutral-600 opacity-0 group-hover:opacity-100" aria-hidden="true" />
                     )}
                   </button>
                 </li>
@@ -369,17 +356,12 @@ export default function CommandPalette({
           </ul>
         )}
 
-        <div className="px-3.5 py-2 rule-t flex items-center gap-4 flex-shrink-0">
-          <span className="flex items-center gap-1.5">
-            <kbd className="label border border-line rounded-[2px] px-1">up</kbd>
-            <kbd className="label border border-line rounded-[2px] px-1">down</kbd>
-            <span className="label">navigate</span>
+        <div className="px-5 py-2.5 border-t border-white/[0.08] bg-[#0a0a0a] flex items-center gap-4 flex-shrink-0 text-neutral-500 font-mono text-[11px]">
+          <span>↑↓ NAVIGATE</span>
+          <span>↵ SELECT</span>
+          <span className="ml-auto">
+            {results.length} ITEM{results.length === 1 ? '' : 'S'}
           </span>
-          <span className="flex items-center gap-1.5">
-            <kbd className="label border border-line rounded-[2px] px-1">enter</kbd>
-            <span className="label">open</span>
-          </span>
-          <span className="label ml-auto hidden sm:inline">{results.length} results</span>
         </div>
       </div>
     </div>

@@ -78,6 +78,10 @@ export function useDeleteMedia() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['media'] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['project'] });
+      queryClient.invalidateQueries({ queryKey: ['timeline'] });
+      queryClient.invalidateQueries({ queryKey: ['chat'] });
     },
   });
 }

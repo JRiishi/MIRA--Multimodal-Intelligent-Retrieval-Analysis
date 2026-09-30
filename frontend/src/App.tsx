@@ -5,6 +5,7 @@ import BootGate from './components/BootGate';
 import { useProjects } from './hooks/projects';
 import { useMediaLibrary } from './hooks/media';
 
+import Landing from './pages/Landing';
 import Dashboard from './pages/Dashboard';
 import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
@@ -19,16 +20,12 @@ const queryClient = new QueryClient({
     queries: {
       refetchOnWindowFocus: false,
       retry: 1,
-      // BootGate holds the first paint until the two blocking queries settle,
-      // so there is no point caching them beyond the session defaults.
       staleTime: 2_000,
     },
   },
 });
 
 function Shell() {
-  // Both of these are needed by the navigation rail and the status strip, so
-  // gating the boot on them guarantees no reflow once the shell appears.
   const projects = useProjects();
   const media = useMediaLibrary();
   const ready = !projects.isLoading && !media.isLoading;
@@ -36,6 +33,10 @@ function Shell() {
   return (
     <BootGate ready={ready}>
       <Routes>
+        {/* Dedicated Standalone Landing Page */}
+        <Route path="/landing" element={<Landing />} />
+
+        {/* Workspace App Layout */}
         <Route element={<AppLayout />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
@@ -45,8 +46,6 @@ function Shell() {
           <Route path="/search" element={<Search />} />
           <Route path="/review" element={<NeedsReview />} />
           <Route path="/reports" element={<Reports />} />
-          {/* Unknown paths get a real 404 view rather than a silent redirect,
-              which previously hid broken links and mistyped URLs. */}
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>
